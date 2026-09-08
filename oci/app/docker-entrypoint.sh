@@ -132,7 +132,7 @@ style_asset_hosts() {
 }
 
 # Attribution is a licence obligation, not decoration. Showing the built-in
-# CARTO string over another provider's tiles is exactly the failure the spec
+# default credit over another provider's tiles is exactly the failure the spec
 # forbids, so a configured source without a matching attribution is a
 # configuration error rather than something to paper over with a default.
 if [ -n "$SAFE_BASEMAP_URL" ] || [ -n "$SAFE_BASEMAP_STYLE_URL" ]; then
@@ -213,14 +213,24 @@ if [ -n "$BASEMAP_PROXY_ENABLED" ]; then
     fi
 fi
 
-# The host the visitor's browser actually contacts, for the privacy page. The
-# style wins over the raster URL, matching app/src/lib/config.js.
+# The host(s) the visitor's browser actually contacts, for the privacy page.
+# The style wins over the raster URL, matching app/src/lib/config.js.
+#
+# NOTE for whoever consumes this (the privacy-page work in #826): the value is
+# a SPACE-SEPARATED LIST, not a single host — a style document can reference
+# several asset hosts. Render it as a list. It is also empty in two very
+# different situations: proxied delivery (genuinely nobody is contacted) and a
+# missing or unreadable style file (unknown). Treat an empty value with a
+# configured style as "unknown", never as "no third party contacted".
 if [ -n "$BASEMAP_PROXY_ENABLED" ]; then
     BASEMAP_TILE_PROVIDER_HOST=""
 else
     _basemap_effective="${SAFE_BASEMAP_STYLE_URL:-$SAFE_BASEMAP_URL}"
     if [ -z "$_basemap_effective" ]; then
-        BASEMAP_TILE_PROVIDER_HOST="basemaps.cartocdn.com"
+        # Nothing configured: the frontend falls back to the vendored style,
+        # so the hosts the browser contacts are that style's own asset hosts.
+        # Keep this in step with DEFAULT_BASEMAP_STYLE_URL in lib/config.js.
+        BASEMAP_TILE_PROVIDER_HOST=$(style_asset_hosts /basemap/style.json | sed 's/ *$//')
     else
         BASEMAP_TILE_PROVIDER_HOST=$(host_of "$_basemap_effective")
         # A same-origin style still sends the browser wherever its assets live,
