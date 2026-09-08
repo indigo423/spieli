@@ -1359,6 +1359,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#basemap-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basemap layers
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2211,6 +2222,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#basemap-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basemap layers
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2554,6 +2576,18 @@
 <li><a href="../add-device/">Add a Device</a> — adding a new playground device type</li>
 <li><a href="../../source-tree-analysis/">Source Tree Analysis</a> — annotated directory map</li>
 </ul>
+<h2 id="basemap-layers">Basemap layers<a class="headerlink" href="#basemap-layers" title="Permanent link">&para;</a></h2>
+<p>The basemap is configuration-driven (<code>app/src/lib/config.js</code>), not hardcoded:</p>
+<ul>
+<li><code>basemapStyleUrl</code> set → a <code>VectorTileLayer</code> styled with <code>ol-mapbox-style</code>, which is <strong>dynamically imported</strong> so raster deployments do not carry its ~310 kB.</li>
+<li>otherwise → an XYZ <code>TileLayer</code> built from <code>basemapUrl</code>.</li>
+</ul>
+<p>Two things are easy to get wrong here, and both were caught in review:</p>
+<ul>
+<li><strong>Attribution belongs to the source, not the layer.</strong> OpenLayers resolves it via <code>layer.getSource().getAttributions()</code>, so passing <code>attributions</code> as a layer option silently does nothing. On the vector path it must be applied after <code>applyStyle()</code> has created the source.</li>
+<li><strong>The vector fallback is gated on <code>basemapUrlIsExplicit</code>.</strong> When a style fails to load, falling back to <code>basemapUrl</code> is only safe if the operator set it; the compiled-in default is a third party that a vector deployment may have chosen vector to avoid.</li>
+</ul>
+<p><code>macroOutlineLayer</code> (zIndex 1) draws a bundled Natural Earth world outline under the hub macro tier, fetched lazily on first use from <code>/basemap/world-110m.json</code> (absolute — a relative path breaks under region URLs). It exists because the basemap tileset covers only the federation's own countries.</p>
 
 
 
