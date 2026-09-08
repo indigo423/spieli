@@ -23,6 +23,52 @@ export const mapMaxZoom = c.mapMaxZoom ?? 21;
 // Search radius in metres for nearby POIs.
 export const poiRadiusM = c.poiRadiusM ?? 5000;
 
+// --- Basemap ---------------------------------------------------------------
+// Two configuration shapes. `basemapStyleUrl` points at a MapLibre style
+// document and renders vector tiles via ol-mapbox-style; `basemapUrl` is an
+// OpenLayers XYZ raster template. OL substitutes {z}/{x}/{y} and {a-d} by name,
+// so a provider using a reversed {z}/{y}/{x} axis order needs no code branch.
+//
+// Style wins when both are set — it is the more specific of the two, and an
+// operator who adds a style URL to an existing raster config means to switch.
+const DEFAULT_BASEMAP_URL =
+    'https://{a-d}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+const DEFAULT_BASEMAP_ATTRIBUTION =
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ' +
+    '| &copy; <a href="https://carto.com/attributions">CARTO</a>';
+
+export const basemapStyleUrl = c.basemapStyleUrl || '';
+export const basemapUrl = c.basemapUrl || DEFAULT_BASEMAP_URL;
+export const basemapAttribution = c.basemapAttribution || DEFAULT_BASEMAP_ATTRIBUTION;
+
+// Whether the operator configured the raster source themselves, as opposed to
+// inheriting the compiled-in CARTO default. The distinction matters for the
+// vector fallback below: falling back to a default the operator never chose
+// would send visitors to a third party they may have picked vector precisely
+// to avoid. The entrypoint refuses to start if a source is configured without
+// a matching attribution, so an explicit URL always carries its own licence.
+export const basemapUrlIsExplicit = !!c.basemapUrl;
+
+// The "a configured source carries its own attribution" rule is enforced by the
+// container entrypoint, which refuses to start without it. That guard does not
+// exist in `make dev` or when app/public/config.js is edited by hand, where the
+// same mistake silently renders the CARTO credit over another provider's tiles.
+// Warn rather than throw: a dev server should not be bricked by a licence
+// nit, but the mistake must not be invisible either.
+if ((c.basemapUrl || c.basemapStyleUrl) && !c.basemapAttribution &&
+    typeof console !== 'undefined') {
+    console.warn(
+        '[spieli] A basemap source is configured but basemapAttribution is empty, ' +
+        'so the default CARTO + OpenStreetMap credit is being shown over it. ' +
+        'Attribution is a licence obligation — set basemapAttribution to match ' +
+        'the configured provider. (The container entrypoint refuses to start on this.)',
+    );
+}
+
+// True when a vector style is configured. Map.svelte builds a VectorTileLayer
+// in that case and a raster TileLayer otherwise.
+export const basemapIsVector = !!basemapStyleUrl;
+
 // Base URL for the PostgREST API (e.g. "/api" in Docker, empty string for local dev).
 // When empty, the app falls back to Overpass for playground data.
 export const apiBaseUrl = c.apiBaseUrl || '';
