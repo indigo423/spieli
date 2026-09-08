@@ -176,16 +176,27 @@
       attributions: basemapAttribution,
     });
 
+    // Explicit zIndex 0 so the macro outline at -1 is reliably behind it.
     const basemap = basemapIsVector
-      ? new VectorTileLayer({ declutter: true })
-      : new TileLayer({ source: rasterBasemapSource() });
+      ? new VectorTileLayer({ declutter: true, zIndex: 0 })
+      : new TileLayer({ source: rasterBasemapSource(), zIndex: 0 });
 
     if (basemapIsVector) {
-      // Dynamically imported so raster deployments do not carry it: the
-      // library adds ~310 kB raw / ~50 kB gzipped to the bundle, and the
-      // default delivery is raster.
+      // Dynamically imported: the library adds ~310 kB raw / ~50 kB gzipped.
+      // Vector is now the default, so most deployments do load it — but on a
+      // second round trip after first paint rather than in the main bundle,
+      // and a raster-configured deployment still never fetches it at all.
       import('ol-mapbox-style')
-        .then(({ applyStyle }) => applyStyle(basemap, basemapStyleUrl))
+        .then(({ applyStyle }) => applyStyle(basemap, basemapStyleUrl, {
+          // ol-mapbox-style otherwise resolves webfonts from cdn.jsdelivr.net
+          // at runtime, which would add a third-party host to every page load
+          // — the exact leak this basemap work exists to remove, reintroduced
+          // by the rendering library rather than by the tiles. Pointing it at
+          // a same-origin path keeps it local; if no font is shipped there the
+          // request 404s and labels fall back to a system font, which costs
+          // some typographic fidelity and contacts nobody.
+          webfonts: '/basemap/fonts/{font-family}/{fontweight}{-fontstyle}.css',
+        }))
         .then(() => {
           // Attribution belongs to the SOURCE, not the layer — OpenLayers
           // resolves it via layer.getSource().getAttributions(), so setting it
@@ -197,13 +208,18 @@
         .catch(err => {
           console.error('[spieli] basemap style failed to load:', err);
           // Fall back to the raster source ONLY when the operator configured
-          // one. Falling back to the compiled-in CARTO default would send
-          // visitors to a third party that an operator running vector tiles
-          // may have chosen vector specifically to avoid — the same failure
-          // mode as a proxy quietly reverting to direct delivery. With nothing
-          // safe to fall back to, the map renders without a basemap.
+          // one. There is no raster default, so with nothing configured there
+          // is nothing safe to reach for and the map renders without a
+          // basemap — rather than silently substituting some third party the
+          // operator never chose.
           if (!basemapUrlIsExplicit) return;
           try {
+            // NOTE: basemapAttribution was written for the style provider, so
+            // the fallback credits it over the raster provider's tiles. Both
+            // are operator-configured in the only case this can fire (style
+            // and raster both set), and a single attribution string cannot
+            // describe two providers — tracked in #830 rather than silently
+            // rendering the wrong credit forever.
             olMap.removeLayer(basemap);
             olMap.addLayer(new TileLayer({ source: rasterBasemapSource(), zIndex: 0 }));
           } catch (fallbackErr) {
@@ -500,9 +516,14 @@
     // void that disqualified a Germany-only provider. This fills it in from a
     // bundled Natural Earth extract, with no network request to a third party.
     // Fetched lazily on first macro tier so it never costs standalone users.
+    // zIndex -1: BELOW the basemap, not above it. This is a backdrop that
+    // shows through where the tileset has no coverage, not an overlay. Drawn
+    // on top it washes the basemap out everywhere the basemap does render —
+    // verified by A/B screenshots at the macro tier, where roads, labels and
+    // terrain detail all disappeared behind it.
     macroOutlineLayer = new VectorLayer({
       source: new VectorSource(),
-      zIndex: 1,
+      zIndex: -1,
       style: macroOutlineStyle,
       visible: false,
     });
@@ -531,7 +552,12 @@
       playgroundLayer.setVisible(tier === 'polygon');
       clusterLayer.setVisible(tier === 'cluster');
       macroLayer.setVisible(tier === 'macro');
-      if (macroOutlineLayer) {
+      // Only meaningful under a vector basemap, whose background is not
+      // painted by applyStyle, so the outline shows through where the tileset
+      // has no coverage. Raster tiles are opaque PNGs at zIndex 0, so an
+      // outline beneath them can never be seen — and fetching it would be a
+      // pointless 164 kB on every macro entry.
+      if (macroOutlineLayer && basemapIsVector) {
         macroOutlineLayer.setVisible(tier === 'macro');
         if (tier === 'macro') loadMacroOutline();
       }
