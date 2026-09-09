@@ -26,6 +26,12 @@ requires a thinner *tileset*, which is a separate piece of work.
 
 Usage:
     tools/build-basemap-style.py [--source URL] [--out PATH]
+                                 [--asset-base BASE] [--local-out PATH]
+
+--asset-base rewrites the style's tile, glyph and sprite URLs onto one origin
+(normally /basemap), which is what makes the browser talk only to this
+instance. --local-out emits that same-origin variant alongside the upstream one
+from a SINGLE fetch, so the two cannot be built from different upstreams.
 """
 import argparse
 import colorsys
@@ -105,44 +111,85 @@ def rewrite_assets(style, base):
     without this rewrite the map still contacts the upstream host for fonts and
     icons even when the tiles themselves are served locally, which quietly
     breaks any claim that no third party is contacted.
+
+    Only the ORIGIN is stripped; the upstream path is preserved verbatim. That
+    keeps the mapping 1:1 so a plain prefix proxy can serve it — inventing new
+    paths here would force the proxy to reverse a mapping it cannot know.
+
+    Note the `openmaptiles` source is a TileJSON endpoint, not a tile template.
+    Rewriting its `url` is necessary but not sufficient: the document it returns
+    carries absolute upstream tile URLs, so the proxy must also rewrite those in
+    the response body (see the sub_filter in the generated nginx config).
     """
     base = base.rstrip('/')
     changed = []
+    dropped_query = []
+
+    def relocate(url):
+        if not isinstance(url, str):
+            return url, False
+        # Protocol-relative (//host/path) counts as a third-party fetch just as
+        # much as https://host/path, and both the rewrite and the leak check
+        # used to walk straight past it.
+        if url.startswith('//'):
+            rest = url[2:]
+        elif '://' in url:
+            rest = url.split('://', 1)[1]
+        else:
+            return url, False
+        path = rest.split('/', 1)[1] if '/' in rest else ''
+        # Query strings are dropped, not carried. Rebuilding against a keyed
+        # provider (--source 'https://x/style?key=...') would otherwise bake the
+        # operator's API key into a committed style and hand it to every
+        # browser. A key belongs server-side, re-attached by the proxy.
+        head, sep, _ = path.partition('?')
+        if sep:
+            dropped_query.append(url)
+        path = head.partition('#')[0]
+        return f'{base}/{path}', True
 
     if style.get('glyphs'):
-        style['glyphs'] = f'{base}/fonts/{{fontstack}}/{{range}}.pbf'
-        changed.append('glyphs')
+        style['glyphs'], ok = relocate(style['glyphs'])
+        if ok:
+            changed.append('glyphs')
     if style.get('sprite'):
-        style['sprite'] = f'{base}/sprites/sprite'
-        changed.append('sprite')
+        style['sprite'], ok = relocate(style['sprite'])
+        if ok:
+            changed.append('sprite')
 
     for name, source in (style.get('sources') or {}).items():
         if source.get('url'):
-            # The TileJSON that `url` points at carries minzoom/maxzoom, and
-            # dropping it loses them — the client would then request z15-21
-            # instead of overzooming the deepest available tile. Defaults match
-            # the OpenMapTiles schema.
-            source.setdefault('minzoom', 0)
-            source.setdefault('maxzoom', 14)
-            source.pop('url')
-            source['tiles'] = [f'{base}/tiles/{name}/{{z}}/{{x}}/{{y}}.pbf']
-            changed.append(f'source:{name}')
+            source['url'], ok = relocate(source['url'])
+            if ok:
+                changed.append(f'source:{name}(tilejson)')
         elif source.get('tiles'):
-            suffix = '.png' if source.get('type') == 'raster' else '.pbf'
-            source['tiles'] = [f'{base}/tiles/{name}/{{z}}/{{x}}/{{y}}{suffix}']
-            changed.append(f'source:{name}')
+            moved = [relocate(t) for t in source['tiles']]
+            source['tiles'] = [u for u, _ in moved]
+            if any(ok for _, ok in moved):
+                changed.append(f'source:{name}')
+
+    for url in dropped_query:
+        print(f'  note: dropped the query string from {url.split("?")[0]}?… — a '
+              'provider key must not be baked into a committed style',
+              file=sys.stderr)
 
     return changed
 
 
-def build(source, out, asset_base=None):
+def load_style(source):
     if source.startswith(('http://', 'https://')):
         req = urllib.request.Request(source, headers={'User-Agent': 'spieli-style-build'})
         with urllib.request.urlopen(req, timeout=30) as fh:
-            style = json.load(fh)
-    else:
-        with open(source, encoding='utf-8') as fh:
-            style = json.load(fh)
+            return json.load(fh)
+    with open(source, encoding='utf-8') as fh:
+        return json.load(fh)
+
+
+def build(source, out, asset_base=None, style=None):
+    # `style` lets one fetch produce both variants. Fetching twice let the
+    # upstream rotate between the two calls, yielding a style.json and a
+    # style.local.json built from different upstreams with nothing detecting it.
+    style = copy.deepcopy(style) if style is not None else load_style(source)
 
     before = len(style['layers'])
     kept, dropped, recoloured = [], [], []
@@ -162,8 +209,12 @@ def build(source, out, asset_base=None):
     style['layers'] = kept
     rewritten = rewrite_assets(style, asset_base) if asset_base else []
     style['name'] = 'spieli basemap'
+    # The source is recorded WITHOUT its scheme. The entrypoint decides whether
+    # a style is same-origin by text-scanning it for http(s):// — provenance
+    # metadata carrying a full URL reads as a third-party asset host, which made
+    # the proxy refuse the very style it was meant to accept.
     style['metadata'] = dict(style.get('metadata') or {}, **{
-        'spieli:source': source,
+        'spieli:source': re.sub(r'^[a-z]+://', '', source),
         'spieli:generator': 'tools/build-basemap-style.py',
     })
 
@@ -178,6 +229,27 @@ def build(source, out, asset_base=None):
         return 1
     for wanted in sorted(GREEN_LAYERS - set(recoloured)):
         print(f'  note: {wanted} not present upstream (nothing to recolour)')
+
+    # An --asset-base build exists to contain no third-party URL at all. Assert
+    # it rather than trust it: this is the property the whole caching design
+    # rests on, and a silent miss looks exactly like success.
+    if asset_base:
+        # The asset base's own host is not a leak when it is given as an
+        # absolute origin — without this exemption the documented remediation
+        # (--asset-base https://tiles.example.org) always failed, flagging the
+        # operator's own origin as third-party and writing nothing.
+        allowed = set()
+        if '://' in asset_base:
+            allowed.add(asset_base.split('://', 1)[1].split('/', 1)[0])
+        blob = json.dumps(style)
+        # (?:https?:)? so a protocol-relative //host reference is caught too.
+        leaked = sorted({h for h in re.findall(r'(?:https?:)?//([A-Za-z0-9.:-]+)', blob)
+                         if h not in allowed})
+        if leaked:
+            print(f'{source}\n  -> NOT WRITTEN', file=sys.stderr)
+            print('  ERROR: --asset-base build still references: '
+                  + ', '.join(leaked), file=sys.stderr)
+            return 1
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, 'w', encoding='utf-8') as fh:
@@ -208,8 +280,17 @@ def main():
                          'proxied or locally-served delivery (e.g. /basemap). '
                          'Omit to keep upstream URLs, which means the visitor\'s '
                          'browser contacts the upstream host directly.')
+    ap.add_argument('--local-out', default=None,
+                    help='also write a same-origin variant here, from the same '
+                         'fetch (implies --asset-base /basemap unless given)')
     args = ap.parse_args()
-    return build(args.source, args.out, args.asset_base)
+
+    style = load_style(args.source)
+    rc = build(args.source, args.out, args.asset_base, style=style)
+    if rc or not args.local_out:
+        return rc
+    return build(args.source, args.local_out, args.asset_base or '/basemap',
+                 style=style)
 
 
 if __name__ == '__main__':

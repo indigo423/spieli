@@ -160,8 +160,8 @@ docs-clean:               ## Remove site/ and .venv
 require-python3:
 	$(call require,python3)
 
-basemap-style: require-python3   ## Rebuild app/public/basemap/style.json from upstream
-	python3 tools/build-basemap-style.py
+basemap-style: require-python3   ## Rebuild both basemap style variants from upstream
+	python3 tools/build-basemap-style.py --local-out app/public/basemap/style.local.json
 
 basemap-outline: require-python3 ## Rebuild the macro-tier world outline from Natural Earth
 	python3 tools/build-macro-outline.py
