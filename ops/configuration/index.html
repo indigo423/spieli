@@ -14,7 +14,7 @@
         <link rel="prev" href="../add-data-node/">
       
       
-        <link rel="next" href="../upgrade/">
+        <link rel="next" href="../shared-basemap-cache/">
       
       
         
@@ -980,6 +980,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shared-basemap-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shared Basemap Cache
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -2535,7 +2563,8 @@ so the budget is the larger of the two plus baseline (~700 MB for
 </ul>
 <p>Proxied requests are not written to the access log, for the same reason they are not sent to a third party: at high zoom the z/x/y stream is a record of what someone looked at. Files served from disk are logged normally — a webfont or the style document fetched once says nothing about where anyone looked.</p>
 <p>This covers the <em>access</em> log only. <code>error_log</code> still records the URI of a request that fails upstream, which is what keeps outages diagnosable; it is a record of failures rather than of browsing, but it is not nothing, so treat the container's error log with the same care as any other log that can name a path a visitor requested.</p>
-<p>The cache lives on the container's writable layer, so <code>make docker-build</code> discards it and the next visitors refill it from the upstream. Mount a volume at <code>/var/cache/nginx/basemap</code> to keep it, which matters more here than for <code>/tiles/</code>: this cache is on by default, and an upgrade sweep across stacks otherwise sends every one of them cold at the public server.</p>
+<p>The cache lives on the container's writable layer, so <code>make docker-build</code> discards it and the next visitors refill it from the upstream. Mount a volume at <code>/var/cache/nginx/basemap</code> to keep it, which matters more here than for <code>/tiles/</code>: this cache is on by default, and an upgrade sweep across stacks otherwise sends every one of them cold at the public server. <code>compose.yml</code> and <code>compose.prod.yml</code> both ship a <code>basemap_cache</code> volume for this.</p>
+<p>Running <strong>several stacks on one host</strong>? Point them all at a single shared cache instead of running one per stack — see <a href="../shared-basemap-cache/">Shared Basemap Cache</a>. Fifteen caches at the 4 GB default is up to 60 GB of disk and fifteen separate clients hitting the public tile server, all going cold together on every upgrade sweep.</p>
 <p><strong>To run your own tileserver</strong>, two steps — the bundled style carries the <em>provider's</em> asset paths (<code>/planet</code>, <code>/sprites/ofm_f384/ofm</code>, <code>/natural_earth/…</code>), so a differently-shaped server needs the style rebuilt against it:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># 1. rebuild the style against the new provider</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>tools/build-basemap-style.py<span class="w"> </span>--source<span class="w"> </span>https://my-tileserver/styles/foo<span class="w"> </span><span class="se">\</span>
