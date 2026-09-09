@@ -1835,7 +1835,7 @@
 </tr>
 <tr>
 <td><a href="https://openfreemap.org">OpenFreeMap</a> / <a href="https://www.openmaptiles.org">OpenMapTiles</a></td>
-<td>Background map tiles (default; configurable, and avoidable entirely via <code>BASEMAP_PROXY</code>)</td>
+<td>Background map tiles — fetched <strong>server-side and cached</strong>, never by the visitor's browser. Configurable via <code>BASEMAP_UPSTREAM</code>, including pointing it at a tileserver you run yourself.</td>
 </tr>
 <tr>
 <td><a href="https://panoramax.xyz">Panoramax</a></td>
@@ -1860,6 +1860,7 @@
 </tbody>
 </table>
 <p>All map data comes from OpenStreetMap or the free services listed above. No proprietary data, no user accounts, no tracking.</p>
+<p>Only some of these are contacted by the visitor's <strong>browser</strong>. The basemap is not: it is the one entry above that spieli fetches server-side and caches, so the tile server sees one polite client per instance rather than every visitor. See <a href="../../ops/security/#the-basemap-is-same-origin-by-default">Security</a>.</p>
 
 
 

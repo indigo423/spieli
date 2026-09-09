@@ -1092,6 +1092,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="External service dependencies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-basemap-is-same-origin-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The basemap is same-origin by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2054,6 +2071,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="External service dependencies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-basemap-is-same-origin-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The basemap is same-origin by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2179,8 +2213,8 @@
 <td>Search query text, IP address</td>
 </tr>
 <tr>
-<td>Basemap provider (configurable — see <a href="../configuration/#basemap">Configuration</a>; none when <code>BASEMAP_PROXY</code> is enabled)</td>
-<td>Map tile coordinates, IP address</td>
+<td>Basemap provider — <strong>nothing by default</strong>, see below</td>
+<td>Map tile coordinates, IP address (only if you configure a third-party basemap)</td>
 </tr>
 <tr>
 <td>Panoramax</td>
@@ -2197,6 +2231,15 @@
 </tbody>
 </table>
 <p>No personal data, user accounts, or tracking pixels are added by spieli itself. See <a href="../../reference/external-services/">External Services</a> for the full list.</p>
+<h3 id="the-basemap-is-same-origin-by-default">The basemap is same-origin by default<a class="headerlink" href="#the-basemap-is-same-origin-by-default" title="Permanent link">&para;</a></h3>
+<p>Out of the box, no basemap request leaves your server.
+The bundled vector style references every asset — tiles, sprites, glyphs and webfonts — under <code>/basemap/</code> on your own instance.
+nginx serves what is vendored in the image from disk and fetches the rest from <code>BASEMAP_UPSTREAM</code> server-side, caching it.
+Your visitors' browsers never contact the tile server, and those proxied requests are not written to the access log.</p>
+<p>This is the default, not something you have to switch on.
+<code>BASEMAP_PROXY</code> is a separate, older mechanism for proxying a <em>raster</em> provider and is not what makes the above true.</p>
+<p>You lose the property only by opting out: setting <code>BASEMAP_STYLE_URL</code> or <code>BASEMAP_URL</code> to a third party points visitors' browsers at that provider directly.
+The container refuses to start if you do that without also setting <code>BASEMAP_ATTRIBUTION</code>.</p>
 <h2 id="cors-for-hub-data-nodes">CORS for Hub data-nodes<a class="headerlink" href="#cors-for-hub-data-nodes" title="Permanent link">&para;</a></h2>
 <p>Data-nodes (<code>data-node-ui</code> mode) respond with <code>Access-Control-Allow-Origin: *</code> on all <code>/api/</code> endpoints. This is intentional — the Hub's browser must be able to query data-nodes cross-origin. If you want to restrict CORS to specific Hub origins, edit the <code>add_header Access-Control-Allow-Origin</code> lines in <code>oci/app/nginx.conf</code> before building your image.</p>
 <h2 id="keeping-images-up-to-date">Keeping images up to date<a class="headerlink" href="#keeping-images-up-to-date" title="Permanent link">&para;</a></h2>

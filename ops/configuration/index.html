@@ -906,6 +906,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-default-a-cached-public-tile-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The default: a cached public tile server
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#two-source-shapes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -917,10 +928,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#two-delivery-modes-today" class="md-nav__link">
+  <a href="#delivery-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Two delivery modes today
+        Delivery modes
       
     </span>
   </a>
@@ -2098,6 +2109,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-default-a-cached-public-tile-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The default: a cached public tile server
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#two-source-shapes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2109,10 +2131,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#two-delivery-modes-today" class="md-nav__link">
+  <a href="#delivery-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Two delivery modes today
+        Delivery modes
       
     </span>
   </a>
@@ -2262,6 +2284,12 @@
 <td>Minimum zoom level</td>
 </tr>
 <tr>
+<td><code>BASEMAP_UPSTREAM</code></td>
+<td><code>https://tiles.openfreemap.org</code></td>
+<td>ui, data-node-ui</td>
+<td>Where the bundled style's tiles and sprites are fetched from and cached. Origin only (<code>scheme://host[:port]</code>), no path. Point it at your own tileserver to stop using a public one — a two-step swap, see <a href="#basemap">Basemap</a>.</td>
+</tr>
+<tr>
 <td><code>BASEMAP_URL</code></td>
 <td><em>(unset)</em></td>
 <td>ui, data-node-ui</td>
@@ -2289,7 +2317,7 @@
 <td><code>BASEMAP_CACHE_MAX_SIZE</code></td>
 <td><code>4g</code></td>
 <td>ui, data-node-ui</td>
-<td>Disk ceiling for the tile cache. Only used when <code>BASEMAP_PROXY</code> is enabled.</td>
+<td>Disk ceiling per cache zone. The basemap cache always exists; enabling <code>BASEMAP_PROXY</code> adds a second zone sized from the same value, so the on-disk total can be twice this.</td>
 </tr>
 <tr>
 <td><code>BASEMAP_CACHE_KEYS_ZONE</code></td>
@@ -2497,8 +2525,29 @@ so the budget is the larger of the two plus baseline (~700 MB for
 </code></pre></div>
 <h2 id="basemap">Basemap<a class="headerlink" href="#basemap" title="Permanent link">&para;</a></h2>
 <p>The basemap is the one service every visitor contacts on every map movement, so how it is delivered is a privacy decision as much as a rendering one.</p>
+<h3 id="the-default-a-cached-public-tile-server">The default: a cached public tile server<a class="headerlink" href="#the-default-a-cached-public-tile-server" title="Permanent link">&para;</a></h3>
+<p>Out of the box the bundled vector style references every asset under <code>/basemap/</code> on <strong>this instance</strong>. nginx serves what is vendored in the image (the style document and the webfonts) from disk and fetches the rest — tiles and sprites — from <code>BASEMAP_UPSTREAM</code>, caching it.</p>
+<p>Map labels are drawn from the vendored webfonts, not from the style's <code>glyphs</code> endpoint: <code>ol-mapbox-style</code> resolves text through a webfont CSS template rather than fetching glyph ranges. The style still declares <code>glyphs</code> under <code>/basemap/</code>, and that path proxies correctly if a future renderer does ask for it, but nothing requests it today. <code>make basemap-fonts</code> fails if the style asks for a font weight that is not vendored, because the alternative is a silent fallback to a system font plus an upstream request on every page load.</p>
+<p>That arrangement does two jobs at once:</p>
+<ul>
+<li><strong>It is kind to the upstream.</strong> OpenFreeMap is donation-funded and run by one person. A federation of backends sending every visitor's tile requests straight there is not a neighbourly load pattern; a cache in front means one client per deployment, with duplicate misses collapsed (<code>proxy_cache_lock</code>) and conditional revalidation rather than full refetches.</li>
+<li><strong>Visitors' browsers never contact it.</strong> No third party sees a visitor's IP address or the z/x/y stream that reveals what they were looking at.</li>
+</ul>
+<p>Proxied requests are not written to the access log, for the same reason they are not sent to a third party: at high zoom the z/x/y stream is a record of what someone looked at. Files served from disk are logged normally — a webfont or the style document fetched once says nothing about where anyone looked.</p>
+<p>This covers the <em>access</em> log only. <code>error_log</code> still records the URI of a request that fails upstream, which is what keeps outages diagnosable; it is a record of failures rather than of browsing, but it is not nothing, so treat the container's error log with the same care as any other log that can name a path a visitor requested.</p>
+<p>The cache lives on the container's writable layer, so <code>make docker-build</code> discards it and the next visitors refill it from the upstream. Mount a volume at <code>/var/cache/nginx/basemap</code> to keep it, which matters more here than for <code>/tiles/</code>: this cache is on by default, and an upgrade sweep across stacks otherwise sends every one of them cold at the public server.</p>
+<p><strong>To run your own tileserver</strong>, two steps — the bundled style carries the <em>provider's</em> asset paths (<code>/planet</code>, <code>/sprites/ofm_f384/ofm</code>, <code>/natural_earth/…</code>), so a differently-shaped server needs the style rebuilt against it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># 1. rebuild the style against the new provider</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>tools/build-basemap-style.py<span class="w"> </span>--source<span class="w"> </span>https://my-tileserver/styles/foo<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">                             </span>--asset-base<span class="w"> </span>/basemap<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">                             </span>--out<span class="w"> </span>app/public/basemap/style.local.json
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="c1"># 2. point the cache at it (origin only — a path is rejected at startup)</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="nv">BASEMAP_UPSTREAM</span><span class="o">=</span>http://tileserver:8080
+</code></pre></div>
+<p>An earlier draft of this section claimed the swap was one variable and nothing else. It is not: a 1:1 prefix proxy cannot reshape one provider's URL layout into another's. Two steps, both scriptable, is the honest version — and a provider migration is a one-time operation that already involves standing up a server.</p>
+<p><code>BASEMAP_UPSTREAM</code> must be an origin (<code>scheme://host[:port]</code>) with no path. A path is refused at startup rather than accepted, because <code>proxy_pass</code> with a variable <em>replaces</em> the request URI instead of prefixing it — every asset would collapse onto that one path and the map would render blank with no error.</p>
 <h3 id="two-source-shapes">Two source shapes<a class="headerlink" href="#two-source-shapes" title="Permanent link">&para;</a></h3>
-<p>Leave both unset and you get the bundled vector style. It is the application's compiled-in default, <strong>not</strong> the env var's default — do not copy <code>/basemap/style.json</code> into <code>.env</code> as a value. Setting <code>BASEMAP_STYLE_URL</code> marks the basemap as <em>configured</em>, which then requires <code>BASEMAP_ATTRIBUTION</code> (the container refuses to start without it) and is rejected outright alongside <code>BASEMAP_PROXY</code>, because the bundled style's assets are not same-origin.</p>
+<p>Leave both unset and you get the bundled vector style. The container serves <code>/basemap/style.local.json</code> and the <code>make dev</code> server falls back to <code>/basemap/style.json</code>; both are compiled-in defaults, <strong>not</strong> the env var's default — do not copy either into <code>.env</code> as a value. Setting <code>BASEMAP_STYLE_URL</code> marks the basemap as <em>configured</em>, which then requires <code>BASEMAP_ATTRIBUTION</code> — the container refuses to start without it. A style whose assets point at a third party is also rejected alongside <code>BASEMAP_PROXY</code>, since the style would bypass the proxy; the bundled style is same-origin and is accepted.</p>
 <p>Precedence when you do set them:</p>
 <table>
 <thead>
@@ -2528,11 +2577,11 @@ so the budget is the larger of the two plus baseline (~700 MB for
 </table>
 <p><code>BASEMAP_URL</code> is an OpenLayers XYZ raster template.</p>
 <p>Raster templates are passed through verbatim, so a provider using a reversed axis order works without a code change:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">BASEMAP_URL</span><span class="o">=</span><span class="s1">'https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_farbe/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">BASEMAP_URL</span><span class="o">=</span><span class="s1">'https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_farbe/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png'</span>
 </code></pre></div>
 <p>That example is included because it exercises the axis-order case, <strong>not as a recommendation</strong>: basemap.de covers Germany only, and outside Germany it returns <code>200 OK</code> with a blank tile rather than an error. Nothing fails, nothing alerts, and a proxy cache will happily store the blanks. Check your provider's coverage against your region before adopting it.</p>
 <p>Whatever you choose, set <code>BASEMAP_ATTRIBUTION</code> to match. Showing one provider's attribution over another's tiles is a licence problem, not a cosmetic one.</p>
-<h3 id="two-delivery-modes-today">Two delivery modes today<a class="headerlink" href="#two-delivery-modes-today" title="Permanent link">&para;</a></h3>
+<h3 id="delivery-modes">Delivery modes<a class="headerlink" href="#delivery-modes" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -2543,22 +2592,27 @@ so the budget is the larger of the two plus baseline (~700 MB for
 </thead>
 <tbody>
 <tr>
-<td><strong>direct</strong> (default)</td>
+<td><strong>cached</strong> (default)</td>
+<td>nothing — the bundled same-origin style</td>
+<td>Nobody. The browser talks only to this instance; tiles are fetched server-side from <code>BASEMAP_UPSTREAM</code> and cached</td>
+</tr>
+<tr>
+<td><strong>direct</strong></td>
 <td><code>BASEMAP_URL</code> or <code>BASEMAP_STYLE_URL</code> pointing at a third party</td>
 <td>The provider receives every visitor's IP address, User-Agent, <code>Referer</code> and tile coordinates</td>
 </tr>
 <tr>
 <td><strong>proxied</strong></td>
-<td><code>BASEMAP_PROXY=true</code></td>
-<td>The provider sees only this server. The visitor's browser never contacts it</td>
+<td><code>BASEMAP_PROXY=true</code> with a raster <code>BASEMAP_URL</code></td>
+<td>The provider sees only this server. Predates the default above and applies to raster providers</td>
 </tr>
 </tbody>
 </table>
-<p>A third mode, <strong>mirrored</strong> — serving the tileset from this instance so no provider is contacted at request time at all — is not available yet. Redistribution terms for the tileset have to be confirmed first; see the <code>configurable-basemap-delivery</code> change for the open question.</p>
-<p>Setting <code>BASEMAP_STYLE_URL=/basemap/style.json</code> gets you a <em>same-origin style document</em>, but the bundled style as shipped still fetches its tiles, fonts and sprites from <code>tiles.openfreemap.org</code>. That is direct delivery with a local style file, not mirroring. Rebuild the style with <code>--asset-base</code> (see below) and serve those assets yourself before making any claim that no third party is contacted.</p>
+<p>A fourth mode, <strong>mirrored</strong> — shipping the tileset with the instance so no provider is contacted even server-side — is not implemented. A DE + CZ + SK PMTiles build is around 5 GB per stack, against a demand-driven cache that costs a fraction of that; <code>BASEMAP_UPSTREAM</code> is what makes the swap cheap if that changes.</p>
+<p>Note <code>BASEMAP_STYLE_URL=/basemap/style.json</code> is <strong>not</strong> the default and is not same-origin delivery: the committed <code>style.json</code> is served locally but still points its tiles, fonts and sprites at <code>tiles.openfreemap.org</code>. The container serves <code>style.local.json</code>, the <code>--asset-base</code> variant, whose assets all resolve under <code>/basemap/</code>. Both are built by <code>make basemap-style</code>; only the second one keeps the browser on your origin.</p>
 <p>Proxying has no fallback to direct delivery. If the upstream is unreachable, tiles fail and the map renders without a basemap. That is deliberate: falling back would leak exactly the addresses proxying was enabled to protect, at the moment something is already wrong.</p>
 <p>For the same reason, enabling <code>BASEMAP_PROXY</code> alongside a vector style is <strong>rejected at startup</strong> whenever that style would still send the browser to a third party — the style takes precedence over the raster URL, so the browser would fetch everything directly while the proxy sat unused and the privacy page claimed otherwise.</p>
-<p>That check looks at the style <em>document</em>, not just its URL. A same-origin <code>BASEMAP_STYLE_URL</code> proves nothing on its own: the bundled <code>/basemap/style.json</code> is served locally but points its tiles, glyphs and sprites at <code>tiles.openfreemap.org</code>, so it is rejected too. Rebuild it with <code>--asset-base</code> first. Only a style whose assets are all same-origin can be combined with the proxy.</p>
+<p>That check looks at the style <em>document</em>, not just its URL. A same-origin <code>BASEMAP_STYLE_URL</code> proves nothing on its own: <code>/basemap/style.json</code> is served locally but points its tiles, glyphs and sprites at <code>tiles.openfreemap.org</code>, so it is rejected too. <code>/basemap/style.local.json</code> — the container default — is accepted, because its assets are all same-origin. Rebuild it with <code>--asset-base</code> first. Only a style whose assets are all same-origin can be combined with the proxy.</p>
 <h3 id="costs-of-proxying">Costs of proxying<a class="headerlink" href="#costs-of-proxying" title="Permanent link">&para;</a></h3>
 <p>Proxied tiles are served twice from the operator's point of view — inbound on a cache miss, outbound to every visitor always — so tile egress moves onto your server. Budget accordingly, and check that your chosen provider's terms permit proxying and caching; that is your responsibility, not spieli's.</p>
 <p><strong>The cache is not persistent by default.</strong> It lives on the container's writable layer, so <code>make docker-build</code> — the documented way to ship any change — discards it and the next visitors refill it from the upstream. Mount a volume at <code>/var/cache/nginx/tiles</code> if you want it to survive rebuilds.</p>
@@ -2573,13 +2627,37 @@ so the budget is the larger of the two plus baseline (~700 MB for
 <p>When proxying is enabled, nginx sets <code>access_log off</code> on <code>/tiles/</code>. This is a correctness property of the feature rather than a hardening tip: proxying moves the visitor's tile stream onto your server, and at high zoom that z/x/y sequence is not metadata about what someone looked at — it <em>is</em> what they looked at. Logging it would build a per-visitor location trail on your disk, which is worse than the third-party delivery proxying replaces. Error-level logging is retained so upstream failures stay diagnosable.</p>
 <p>If you run a reverse proxy in front of spieli (Traefik, for example), check that it does not log the tile path either. A location trail is no less a location trail for being written by the ingress.</p>
 <h3 id="the-bundled-style">The bundled style<a class="headerlink" href="#the-bundled-style" title="Permanent link">&para;</a></h3>
-<p><code>app/public/basemap/style.json</code> is a vendored copy of OpenFreeMap Bright with two edits, regenerated with <code>tools/build-basemap-style.py</code>:</p>
+<p><code>make basemap-style</code> produces <strong>two</strong> variants from a single upstream fetch, both vendored copies of OpenFreeMap Bright with the same two edits:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Assets point at</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app/public/basemap/style.json</code></td>
+<td><code>tiles.openfreemap.org</code></td>
+<td><code>make dev</code>, which has no nginx to proxy through</td>
+</tr>
+<tr>
+<td><code>app/public/basemap/style.local.json</code></td>
+<td><code>/basemap/</code> on this instance</td>
+<td>the container — this is what visitors get</td>
+</tr>
+</tbody>
+</table>
+<p>One fetch, both outputs: building them in two runs let the upstream rotate in between, leaving the two variants derived from different sources with nothing detecting it.</p>
+<p>The two edits, applied by <code>tools/build-basemap-style.py</code>:</p>
 <ol>
 <li>Green landcover fills are desaturated, because spieli encodes playground data completeness in green, amber and red. A basemap that paints parks green competes with the map's primary signal.</li>
 <li>The <code>poi</code> symbol layers are dropped, as the strongest competitor for attention.</li>
 </ol>
 <p>The second edit is a legibility change only. Dropping a style layer does not reduce render cost — the tile data is still decoded and simply not drawn.</p>
-<p>Pass <code>--asset-base</code> to rewrite the style's tile, glyph and sprite URLs to your own origin. <strong>Without it — which is how the committed <code>style.json</code> is built — those assets are fetched from <code>tiles.openfreemap.org</code> by every visitor</strong>, even though the style document itself is served locally. That is the difference between a local style and a local basemap.</p>
+<p><code>--asset-base</code> is what rewrites the style's tile, glyph and sprite URLs onto one origin, and it is the whole difference between a local style and a local basemap. <strong>Without it — which is how <code>style.json</code> is built — those assets are fetched from <code>tiles.openfreemap.org</code> by every visitor</strong>, even though the style document itself is served locally.</p>
+<p>Only the origin is stripped; the upstream's own paths are preserved verbatim. That 1:1 mapping is what lets a plain prefix proxy serve the result without reversing a mapping it cannot know. The build refuses to write an <code>--asset-base</code> output that still contains a third-party host, and drops any query string it finds, so rebuilding against a keyed provider cannot bake an API key into a committed style.</p>
 
 
 

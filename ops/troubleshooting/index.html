@@ -1221,6 +1221,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-map-renders-but-labels-or-icons-are-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map renders, but labels or icons are missing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#container-refuses-to-start-stylelocaljson-is-missing-from-the-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container refuses to start: style.local.json is missing from the image
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basemap-tiles-are-slow-or-fail-after-an-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basemap tiles are slow or fail after an upgrade
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2221,6 +2254,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-map-renders-but-labels-or-icons-are-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map renders, but labels or icons are missing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#container-refuses-to-start-stylelocaljson-is-missing-from-the-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container refuses to start: style.local.json is missing from the image
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basemap-tiles-are-slow-or-fail-after-an-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basemap tiles are slow or fail after an upgrade
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2516,6 +2582,43 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yml<span class="w"> </span>--profile<span class="w"> </span>&lt;mode&gt;<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>importer
 </code></pre></div>
 <p>This re-applies <code>api.sql</code> (recreating <code>playground_stats</code>) and re-imports OSM data. It takes longer than <code>API_ONLY=1</code> but is always safe.</p>
+<h2 id="the-map-renders-but-labels-or-icons-are-missing">The map renders, but labels or icons are missing<a class="headerlink" href="#the-map-renders-but-labels-or-icons-are-missing" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> the basemap draws roads, water and landcover, but place names are missing, or they render in a system font that looks wrong next to the rest of the UI.</p>
+<p><strong>Cause:</strong> the webfonts the style asks for are not vendored in the image. Labels are drawn from <code>/basemap/fonts/&lt;family&gt;/&lt;weight&gt;.css</code>, not from the style's <code>glyphs</code> endpoint, and a missing weight fails silently: MapLibre falls back to a system font and the map still renders. It also puts a request the tile server cannot answer on every page load.</p>
+<p><strong>Fix:</strong> check which weights the style asks for and re-vendor them.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="c1"># Lists the style's font stacks and fails if one has no vendored file</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>make<span class="w"> </span>basemap-fonts
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="c1"># What is actually in the image:</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>docker<span class="w"> </span>compose<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>app<span class="w"> </span>ls<span class="w"> </span>/usr/share/nginx/html/basemap/fonts/noto-sans/
+</code></pre></div>
+<p><code>Noto Sans Bold</code> needs <code>700.css</code>, <code>Noto Sans Italic</code> needs <code>400-italic.css</code>, and so on. <code>make basemap-fonts</code> fetches all of them and then asserts the coverage, so a green run means every stack in the style resolves.</p>
+<p>Missing <em>icons</em> rather than labels point at the sprite sheet instead: check that <code>/basemap/sprites/…</code> returns 200 and not 404.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>curl<span class="w"> </span>-sI<span class="w"> </span>http://localhost:8080/basemap/sprites/ofm_f384/ofm.png<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1
+</code></pre></div>
+<p>A 404 there usually means an nginx location-precedence problem — regex locations are matched before plain prefixes, so a <code>~* \.png$</code> block can claim these paths unless the <code>/basemap/</code> location uses <code>^~</code>.</p>
+<hr />
+<h2 id="container-refuses-to-start-stylelocaljson-is-missing-from-the-image">Container refuses to start: <code>style.local.json is missing from the image</code><a class="headerlink" href="#container-refuses-to-start-stylelocaljson-is-missing-from-the-image" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> the app container exits immediately with</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>[spieli] FATAL: app/public/basemap/style.local.json is missing from the image.
+</code></pre></div>
+<p><strong>Cause:</strong> <code>style.local.json</code> is a build artefact, not a checked-in-by-hand file, and the build did not produce it. This is deliberate: the entrypoint refuses to fall back to <code>style.json</code>, whose assets point at the public tile server, because that would silently send every visitor to a third party while the docs promise the opposite.</p>
+<p><strong>Fix:</strong> regenerate both style variants and rebuild.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>make<span class="w"> </span>basemap-style<span class="w">     </span><span class="c1"># writes style.json and style.local.json from one fetch</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>make<span class="w"> </span>docker-build
+</code></pre></div>
+<hr />
+<h2 id="basemap-tiles-are-slow-or-fail-after-an-upgrade">Basemap tiles are slow or fail after an upgrade<a class="headerlink" href="#basemap-tiles-are-slow-or-fail-after-an-upgrade" title="Permanent link">&para;</a></h2>
+<p><strong>Symptom:</strong> the map is sluggish or patchy for a while after <code>make docker-build</code>, then recovers.</p>
+<p><strong>Cause:</strong> the tile cache lives at <code>/var/cache/nginx/basemap</code>. Without a volume it sits on the container's writable layer and is discarded on every rebuild, so the next visitors refill it from the upstream one tile at a time.</p>
+<p><strong>Fix:</strong> mount a volume so it survives rebuilds. <code>compose.yml</code> ships one (<code>basemap_cache</code>); if you deploy from <code>compose.prod.yml</code> or a hand-written file, add the equivalent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="w">  </span><span class="nt">app</span><span class="p">:</span>
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basemap_cache:/var/cache/nginx/basemap</span>
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="nt">volumes</span><span class="p">:</span>
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a><span class="w">  </span><span class="nt">basemap_cache</span><span class="p">:</span>
+</code></pre></div>
+<p>This matters most for an upgrade sweep across several stacks, which would otherwise send every one of them at the public tile server cold at the same time.</p>
 
 
 
