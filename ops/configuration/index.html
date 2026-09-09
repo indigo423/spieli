@@ -2331,9 +2331,9 @@
 </tr>
 <tr>
 <td><code>BASEMAP_ATTRIBUTION</code></td>
-<td>OpenFreeMap + OpenMapTiles + OSM</td>
+<td><em>(the tile server's own credit)</em></td>
 <td>ui, data-node-ui</td>
-<td>Attribution HTML shown on the map. <strong>Required</strong> whenever <code>BASEMAP_URL</code> or <code>BASEMAP_STYLE_URL</code> is set — the container refuses to start otherwise. Trusted HTML: rendered into the page as-is.</td>
+<td>Overrides the attribution the map shows. Leave unset and the credit comes from the tile server itself, which is correct for any upstream. <strong>Required</strong> whenever <code>BASEMAP_URL</code> or <code>BASEMAP_STYLE_URL</code> is set — the container refuses to start otherwise. Trusted HTML: rendered into the page as-is.</td>
 </tr>
 <tr>
 <td><code>BASEMAP_PROXY</code></td>
@@ -2565,7 +2565,7 @@ so the budget is the larger of the two plus baseline (~700 MB for
 <p>This covers the <em>access</em> log only. <code>error_log</code> still records the URI of a request that fails upstream, which is what keeps outages diagnosable; it is a record of failures rather than of browsing, but it is not nothing, so treat the container's error log with the same care as any other log that can name a path a visitor requested.</p>
 <p>The cache lives on the container's writable layer, so <code>make docker-build</code> discards it and the next visitors refill it from the upstream. Mount a volume at <code>/var/cache/nginx/basemap</code> to keep it, which matters more here than for <code>/tiles/</code>: this cache is on by default, and an upgrade sweep across stacks otherwise sends every one of them cold at the public server. <code>compose.yml</code> and <code>compose.prod.yml</code> both ship a <code>basemap_cache</code> volume for this.</p>
 <p>Running <strong>several stacks on one host</strong>? Point them all at a single shared cache instead of running one per stack — see <a href="../shared-basemap-cache/">Shared Basemap Cache</a>. Fifteen caches at the 4 GB default is up to 60 GB of disk and fifteen separate clients hitting the public tile server, all going cold together on every upgrade sweep.</p>
-<p><strong>To run your own tileserver</strong>, two steps — the bundled style carries the <em>provider's</em> asset paths (<code>/planet</code>, <code>/sprites/ofm_f384/ofm</code>, <code>/natural_earth/…</code>), so a differently-shaped server needs the style rebuilt against it:</p>
+<p><strong>To run your own tileserver</strong>, up to two steps. The bundled style carries the <em>provider's</em> asset paths (<code>/planet</code>, <code>/sprites/ofm_f384/ofm</code>), so a server that mirrors that shape needs only the first step, and a differently-shaped one needs the style rebuilt against it as well:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># 1. rebuild the style against the new provider</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>tools/build-basemap-style.py<span class="w"> </span>--source<span class="w"> </span>https://my-tileserver/styles/foo<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">                             </span>--asset-base<span class="w"> </span>/basemap<span class="w"> </span><span class="se">\</span>
@@ -2609,7 +2609,29 @@ so the budget is the larger of the two plus baseline (~700 MB for
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">BASEMAP_URL</span><span class="o">=</span><span class="s1">'https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_farbe/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png'</span>
 </code></pre></div>
 <p>That example is included because it exercises the axis-order case, <strong>not as a recommendation</strong>: basemap.de covers Germany only, and outside Germany it returns <code>200 OK</code> with a blank tile rather than an error. Nothing fails, nothing alerts, and a proxy cache will happily store the blanks. Check your provider's coverage against your region before adopting it.</p>
-<p>Whatever you choose, set <code>BASEMAP_ATTRIBUTION</code> to match. Showing one provider's attribution over another's tiles is a licence problem, not a cosmetic one.</p>
+<p>Whatever you choose, make sure the credit matches. Showing one provider's attribution over another's tiles is a licence problem, not a cosmetic one.</p>
+<p>For a <strong>vector</strong> basemap you normally do not have to do anything: a tile server declares its own attribution in its TileJSON, and the map uses that. It is authoritative and it differs between servers exactly as it should:</p>
+<table>
+<thead>
+<tr>
+<th>Upstream</th>
+<th>Credit shown</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tiles.openfreemap.org</code></td>
+<td>OpenFreeMap © OpenMapTiles Data from OpenStreetMap</td>
+</tr>
+<tr>
+<td>a self-hosted Planetiler build</td>
+<td>© OpenMapTiles © OpenStreetMap contributors</td>
+</tr>
+</tbody>
+</table>
+<p>Setting <code>BASEMAP_ATTRIBUTION</code> overrides that. Only do so when you have a credit the server cannot know about, because an override that goes stale credits the wrong party silently — that is how a map built from self-hosted tiles came to display "© OpenFreeMap".</p>
+<p>Note this follows the <strong>tile server</strong>, not <code>BASEMAP_UPSTREAM</code>. With a shared cache the upstream is an internal host while the tiles still originate from the public server, so the hostname says nothing about who to credit.</p>
+<p>A <strong>raster</strong> basemap has no TileJSON to ask, which is why <code>BASEMAP_URL</code> requires <code>BASEMAP_ATTRIBUTION</code> and the container refuses to start without it.</p>
 <h3 id="delivery-modes">Delivery modes<a class="headerlink" href="#delivery-modes" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
