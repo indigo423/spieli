@@ -961,6 +961,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#regional-tilesets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regional tilesets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-bundled-style" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2192,6 +2203,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#regional-tilesets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regional tilesets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-bundled-style" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2328,6 +2350,12 @@
 <td><em>(unset — the app falls back to <code>/basemap/style.json</code>)</em></td>
 <td>ui, data-node-ui</td>
 <td>MapLibre style document, rendered as vector tiles. Takes precedence over <code>BASEMAP_URL</code>. See <a href="#basemap">Basemap</a>.</td>
+</tr>
+<tr>
+<td><code>BASEMAP_COVERAGE_BBOX</code></td>
+<td><em>(unset — no limit)</em></td>
+<td>ui, data-node-ui</td>
+<td><code>minLon,minLat,maxLon,maxLat</code> where the basemap has <strong>detailed</strong> data. Only needed for a regional tileset; unset is correct for a planet one. See <a href="#regional-tilesets">Regional tilesets</a>.</td>
 </tr>
 <tr>
 <td><code>BASEMAP_ATTRIBUTION</code></td>
@@ -2677,6 +2705,51 @@ so the budget is the larger of the two plus baseline (~700 MB for
 <h3 id="tile-requests-are-never-access-logged">Tile requests are never access-logged<a class="headerlink" href="#tile-requests-are-never-access-logged" title="Permanent link">&para;</a></h3>
 <p>When proxying is enabled, nginx sets <code>access_log off</code> on <code>/tiles/</code>. This is a correctness property of the feature rather than a hardening tip: proxying moves the visitor's tile stream onto your server, and at high zoom that z/x/y sequence is not metadata about what someone looked at — it <em>is</em> what they looked at. Logging it would build a per-visitor location trail on your disk, which is worse than the third-party delivery proxying replaces. Error-level logging is retained so upstream failures stay diagnosable.</p>
 <p>If you run a reverse proxy in front of spieli (Traefik, for example), check that it does not log the tile path either. A location trail is no less a location trail for being written by the ingress.</p>
+<h3 id="regional-tilesets">Regional tilesets<a class="headerlink" href="#regional-tilesets" title="Permanent link">&para;</a></h3>
+<p>A tileset covering a few countries has <strong>two different extents</strong>, and only one of them is discoverable from the tileset itself.</p>
+<p>Planetiler bakes Natural Earth and water polygons in globally, so low zooms render everywhere and the declared bounds describe that wide area honestly. OSM detail exists only inside the imported extract. Above roughly z7 outside it the tile server answers <code>204 No Content</code>:</p>
+<table>
+<thead>
+<tr>
+<th>place</th>
+<th>z4</th>
+<th>z6</th>
+<th>z8</th>
+<th>z10</th>
+<th>z12</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fulda (covered)</td>
+<td>200</td>
+<td>200</td>
+<td>200</td>
+<td>200</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Paris (outside)</td>
+<td>200</td>
+<td>200</td>
+<td>204</td>
+<td>204</td>
+<td>204</td>
+</tr>
+</tbody>
+</table>
+<p>The renderer draws an empty tile for a 204. Nothing errors and nothing warns, so the result is indistinguishable from a legitimately empty map.</p>
+<p><code>BASEMAP_COVERAGE_BBOX</code> closes that gap. Set it to where your detail actually is and the map shows a quiet notice once the view leaves it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Germany, Czechia and Slovakia</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nv">BASEMAP_COVERAGE_BBOX</span><span class="o">=</span><span class="m">5</span>.8,47.2,22.6,55.1
+</code></pre></div>
+<p>Leave it unset for a planet tileset. Unset means the notice never appears, which is why this changes nothing for an existing deployment.</p>
+<p>Two details worth knowing:</p>
+<ul>
+<li>It keys on the <strong>view centre</strong>, not on the viewport overlapping the box. Near a border a partly-covered view is normal, and warning there would cry wolf.</li>
+<li>It stays quiet below zoom 8, because the tileset's global low-zoom layer still renders there and nothing is actually missing.</li>
+</ul>
+<p>A malformed value is ignored rather than fatal: a typo costs the notice, not the map.</p>
 <h3 id="the-bundled-style">The bundled style<a class="headerlink" href="#the-bundled-style" title="Permanent link">&para;</a></h3>
 <p><code>make basemap-style</code> produces <strong>two</strong> variants from a single upstream fetch, both vendored copies of OpenFreeMap Bright with the same two edits:</p>
 <table>
