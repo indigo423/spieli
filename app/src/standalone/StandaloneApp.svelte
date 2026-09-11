@@ -51,6 +51,7 @@
   let detachPitchLayer = null;
   let detachMapSub = null;
   let regionFitTimer = null;
+  let detachRegionFitWatcher = null;
 
   // Readable store of the current map view in WGS84 for Nominatim `viewbox`.
   // Subscribes to the map's `moveend` when the map becomes available and
@@ -142,35 +143,41 @@
           // Fall back to the region after a short delay if nothing was
           // restored.
           //
-          // The success signal is the `selection` store, read when the timer
-          // fires — not a `moveend` observed while waiting (#774). Two
-          // separate defects came from using the event, and both are fixed by
-          // asking the question at the moment the answer is needed:
+          // The success signal is the `selection` store, not a `moveend`
+          // (#774). Two separate defects came from using the event:
           //
           //  1. A map event is edge-triggered: it exists only at the instant
           //     it fires. This watcher was armed AFTER awaiting Nominatim, so
           //     a slow lookup meant the restore's moveend had already passed
           //     with nothing listening — the fallback then fired and threw
           //     away the framing the restore had just done. Arming earlier
-          //     would only have shrunk that window. Reading state instead of
-          //     catching an event removes it: the store still says a
-          //     playground is selected however long ago that happened.
+          //     would only have shrunk that window. Subscribing to a store
+          //     removes it: a store replays its current value on subscribe,
+          //     so a restore that already happened is still observed.
           //
           //  2. `moveend` means "the map moved", not "the deeplink restored".
           //     Any movement during load — a pan, auto-locate centring on a
           //     GPS fix — satisfied it, suppressing a fallback that should
           //     have run and stranding the visitor on the default extent.
           //
-          // #722 solved the hub's version of this with a `selection`
-          // subscription. Standalone does not need one: hub has several
-          // independent fit triggers and must re-suppress them as a late
-          // restore lands, whereas this is the only `fitToRegion()` on the
-          // deeplink path, so there is nothing to re-suppress. A single read
-          // here is the whole fix — verified by removing the subscription and
-          // seeing both #774 tests still pass.
+          // `restored` latches, and that is load-bearing rather than
+          // incidental: the question is "did a restore ever deliver", not
+          // "is something selected right now". Two paths clear the selection
+          // well inside 1500 ms — the tier deselect above (zoom out past
+          // clusterMaxZoom) and AppShell's mobile "back to map" — and reading
+          // the store live at timer time treats either as "nothing was
+          // restored", yanking the view to the region on top of a deliberate
+          // user action. The old moveend flag latched too, which is why it
+          // never showed this.
+          let restored = false;
+          detachRegionFitWatcher = selection.subscribe(sel => {
+            if (sel.feature) restored = true;
+          });
           regionFitTimer = setTimeout(() => {
             regionFitTimer = null;
-            if (!get(selection).feature) fitToRegion();
+            detachRegionFitWatcher?.();
+            detachRegionFitWatcher = null;
+            if (!restored) fitToRegion();
           }, 1500);
         } else {
           // No deeplink: frame the resolved region, or fall back to the
@@ -265,6 +272,7 @@
     if (detachPitchLayer)  detachPitchLayer();
     if (detachOrchestrator) detachOrchestrator();
     if (regionFitTimer)    clearTimeout(regionFitTimer);
+    if (detachRegionFitWatcher) detachRegionFitWatcher();
   });
 </script>
 

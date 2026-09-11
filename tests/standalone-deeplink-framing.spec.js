@@ -97,21 +97,60 @@ test.describe('Standalone deeplink framing', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
     );
 
+    // Anchor the move to the lookup actually resolving, not to first paint.
+    // The deadline it has to slip inside (800 ms lookup + 1500 ms timer) is
+    // measured from map mount, so a fixed wait after `canvas` becomes visible
+    // drifts on a loaded runner: if paint takes longer than the margin, the
+    // move lands after the fallback has already fired and the test fails for
+    // a reason unrelated to the code.
+    const lookupDone = page.waitForResponse(r => r.url().includes('/lookup'));
     await page.goto('/#W999999999');
     await expect(page.locator('canvas')).toBeVisible({ timeout: 8000 });
+    await lookupDone;
 
-    // Move the map after the watcher is armed (800 ms) but before the 1500 ms
-    // fallback fires. Somewhere far from both the region and the playground,
-    // so "no fit happened" is distinguishable from "fit happened".
-    await page.waitForTimeout(1100);
+    // Short pause so the awaiting code resumes and arms the timer. Moving
+    // BEFORE it is armed would make the test pass against the unfixed code
+    // too — the old `map.once('moveend')` was armed at the same point, so it
+    // would equally have missed the move.
+    await page.waitForTimeout(250);
     await page.evaluate(() => window.__spieli?.map?.getView().setCenter([0, 0]));
 
-    await page.waitForTimeout(2600);
+    await page.waitForTimeout(2200);
 
     const { lon, lat } = await centreInDegrees(page);
     expect(Math.abs(lon - REGION_CENTRE.lon),
       `lon ${lon} should have fallen back to the region after an unresolvable deeplink`).toBeLessThan(0.6);
     expect(Math.abs(lat - REGION_CENTRE.lat),
       `lat ${lat} should have fallen back to the region after an unresolvable deeplink`).toBeLessThan(0.6);
+  });
+
+  test('deselecting inside the fallback window does not yank the view to the region', async ({ page }) => {
+    // Found in review of the first fix. The success signal has to answer "did
+    // a restore ever deliver", not "is something selected right now" — the
+    // distinction only shows up when the visitor deselects inside the 1500 ms
+    // window, which two ordinary actions do: zooming out past clusterMaxZoom
+    // (the tier deselect in StandaloneApp) and AppShell's mobile "back to
+    // map". Reading the store live treats either as "nothing was restored"
+    // and fits to the region on top of a deliberate user action.
+    //
+    // The original `moveend` flag latched, so it never exhibited this; a
+    // replacement that does not latch is a regression rather than a fix.
+    await injectApiConfig(page, { clusterMaxZoom: 13 });
+    await stubApiRoutes(page);
+    await stubRegionLookup(page, { delayMs: 800 });
+
+    await page.goto(`/#W${OSM_ID}`);
+    await expect(page.locator('aside.info-panel')).toBeVisible({ timeout: 8000 });
+
+    // Zoom out past the cluster threshold: tier goes polygon → cluster, which
+    // clears the selection — all inside the fallback window.
+    await page.waitForTimeout(1100);
+    await page.evaluate(() => window.__spieli?.map?.getView().setZoom(10));
+
+    await page.waitForTimeout(2200);
+
+    const { lon } = await centreInDegrees(page);
+    expect(Math.abs(lon - PLAYGROUND_CENTRE.lon),
+      `lon ${lon}: the visitor deselected deliberately, so the region fallback must not fire`).toBeLessThan(0.3);
   });
 });
