@@ -51,7 +51,6 @@
   let detachPitchLayer = null;
   let detachMapSub = null;
   let regionFitTimer = null;
-  let detachRegionFitWatcher = null;
 
   // Readable store of the current map view in WGS84 for Nominatim `viewbox`.
   // Subscribes to the map's `moveend` when the map becomes available and
@@ -94,6 +93,18 @@
       detachMapSub?.();
       detachMapSub = null;
 
+      // Test hook: expose the OL map so the E2E suite can assert where the
+      // view came to rest (e.g. a deeplink frames the linked playground
+      // rather than the region). HubApp publishes the same property; without
+      // it here, the standalone deeplink test could only assert that a panel
+      // opened, which it does whether or not the map was moved away
+      // afterwards — which is how #774 stayed invisible.
+      // Namespaced under `__spieli` so it does not collide with anything else.
+      if (typeof window !== 'undefined') {
+        window.__spieli = window.__spieli ?? {};
+        window.__spieli.map = map;
+      }
+
       // Region fit via Nominatim bbox. The deeplink hash (if any) is read
       // BEFORE the await so the decision can't be invalidated by anything
       // that mutates window.location.hash while we're waiting on Nominatim.
@@ -128,17 +139,38 @@
           // so we don't fit eagerly. But if AppShell.tryRestoreFromHash
           // can't deliver (osm_id 404, hydration error, unknown slug, etc.)
           // no fit ever happens and the user lands on the OL default view.
-          // Fall back to the region view after a short delay if no moveend
-          // has fired — the deeplink-restore success path always fires one.
-          let restored = false;
-          const onMove = () => { restored = true; };
-          map.once('moveend', onMove);
-          detachRegionFitWatcher = () => map.un('moveend', onMove);
+          // Fall back to the region after a short delay if nothing was
+          // restored.
+          //
+          // The success signal is the `selection` store, read when the timer
+          // fires — not a `moveend` observed while waiting (#774). Two
+          // separate defects came from using the event, and both are fixed by
+          // asking the question at the moment the answer is needed:
+          //
+          //  1. A map event is edge-triggered: it exists only at the instant
+          //     it fires. This watcher was armed AFTER awaiting Nominatim, so
+          //     a slow lookup meant the restore's moveend had already passed
+          //     with nothing listening — the fallback then fired and threw
+          //     away the framing the restore had just done. Arming earlier
+          //     would only have shrunk that window. Reading state instead of
+          //     catching an event removes it: the store still says a
+          //     playground is selected however long ago that happened.
+          //
+          //  2. `moveend` means "the map moved", not "the deeplink restored".
+          //     Any movement during load — a pan, auto-locate centring on a
+          //     GPS fix — satisfied it, suppressing a fallback that should
+          //     have run and stranding the visitor on the default extent.
+          //
+          // #722 solved the hub's version of this with a `selection`
+          // subscription. Standalone does not need one: hub has several
+          // independent fit triggers and must re-suppress them as a late
+          // restore lands, whereas this is the only `fitToRegion()` on the
+          // deeplink path, so there is nothing to re-suppress. A single read
+          // here is the whole fix — verified by removing the subscription and
+          // seeing both #774 tests still pass.
           regionFitTimer = setTimeout(() => {
             regionFitTimer = null;
-            detachRegionFitWatcher?.();
-            detachRegionFitWatcher = null;
-            if (!restored) fitToRegion();
+            if (!get(selection).feature) fitToRegion();
           }, 1500);
         } else {
           // No deeplink: frame the resolved region, or fall back to the
@@ -233,7 +265,6 @@
     if (detachPitchLayer)  detachPitchLayer();
     if (detachOrchestrator) detachOrchestrator();
     if (regionFitTimer)    clearTimeout(regionFitTimer);
-    if (detachRegionFitWatcher) detachRegionFitWatcher();
   });
 </script>
 
