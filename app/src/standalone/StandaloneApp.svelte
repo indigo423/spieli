@@ -23,9 +23,11 @@
   import { attachTieredOrchestrator } from '../lib/tieredOrchestrator.js';
   import { regionFitPadding } from '../lib/playgroundHelpers.js';
   import { equipmentLayerStyleFn } from '../lib/vectorStyles.js';
+  import { pitchPinFor } from '../lib/finderStyle.js';
+  import { mappingDetail } from '../stores/mappingDetail.js';
   import { debounce } from '../lib/utils.js';
   import { mapStore } from '../stores/map.js';
-  import { filterStore } from '../stores/filters.js';
+  import { filterStore, effectiveFilterStore } from '../stores/filters.js';
   import { activeTierStore } from '../stores/tier.js';
   import { selection } from '../stores/selection.js';
 
@@ -200,7 +202,7 @@
       pitchLayer = new VectorLayer({
         source: pitchSource,
         zIndex: 9,
-        style: equipmentLayerStyleFn,
+        style: pitchLayerStyle(get(mappingDetail)),
         properties: { kind: 'overlay' },
       });
       map.addLayer(pitchLayer);
@@ -249,10 +251,18 @@
         // uncertainty for variables set inside async/nested callbacks.
         // Skip the immediate invocation (filters start all-false, orchestrator just ran).
         let filterSubReady = false;
-        const unsubFilters = filterStore.subscribe(filters => {
+        // effectiveFilterStore, not filterStore: it also emits when mapping
+        // detail is toggled, and never carries hidden completeness states
+        // while it is off (#924).
+        const unsubFilters = effectiveFilterStore.subscribe(filters => {
           const { standalonePitches: _sp, ...cf } = filters;
-          clusterFilterFingerprint = JSON.stringify(cf);
+          const fingerprint = JSON.stringify(cf);
+          // Only refetch when the filters that reach the server changed: toggling
+          // mapping detail with nothing hidden, or the pitch layer, emits here too.
+          const changed = fingerprint !== clusterFilterFingerprint;
+          clusterFilterFingerprint = fingerprint;
           if (!filterSubReady) { filterSubReady = true; return; }
+          if (!changed) return;
           if (get(activeTierStore) === 'cluster') orchestrator.rerun();
         });
         const baseDetach = orchestrator.detach;
@@ -265,6 +275,19 @@
 
   // Toggle pitch-layer visibility from the filter store.
   $: if (pitchLayer) pitchLayer.setVisible($filterStore.standalonePitches);
+
+  // Pitches get a sport pin so they are findable before their polygon is big
+  // enough to spot. With mapping detail on the polygon stays underneath; in
+  // the finder view the pin alone stands for the pitch, like playgrounds (#924).
+  function pitchLayerStyle(detail) {
+    return feature => {
+      const pin = pitchPinFor(feature);
+      if (pin && !detail) return pin;
+      const base = equipmentLayerStyleFn(feature);
+      return pin ? (base ? [base, pin] : pin) : base;
+    };
+  }
+  $: if (pitchLayer) pitchLayer.setStyle(pitchLayerStyle($mappingDetail));
 
   onDestroy(() => {
     detachTierDeselect();

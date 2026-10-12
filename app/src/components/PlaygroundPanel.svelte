@@ -17,6 +17,7 @@
   import { selection } from '../stores/selection.js';
   import { mapStore } from '../stores/map.js';
   import { location } from '../stores/location.js';
+  import { mappingDetail, DETAIL_PARAM } from '../stores/mappingDetail.js';
   import { fetchPlaygroundEquipment, fetchNearbyPOIs, fetchTrees, fetchMeta } from '../lib/api.js';
   import { overlayFeaturesStore } from '../stores/overlayLayer.js';
   import { groupEquipment } from '../lib/equipmentGrouping.js';
@@ -352,7 +353,9 @@
     partial:  'mappingDetail.basic',
     missing:  'mappingDetail.noDetails',
   };
-  $: completenessLevel = attr ? playgroundCompleteness(attr) : null;
+  // Only while mapping detail is on: in the finder view the badge would bring
+  // back exactly the data-quality reading the view leaves out (#924).
+  $: completenessLevel = attr && $mappingDetail ? playgroundCompleteness(attr) : null;
   $: completeness = completenessLevel
     ? {
         key: MAPPING_DETAIL_KEY[completenessLevel],
@@ -470,7 +473,10 @@
 
   async function sharePlayground() {
     if (!attr) return;
-    const url = `${window.location.origin}${window.location.pathname}#${attr.osm_type}${attr.osm_id}`;
+    // Carry mapping detail only while it is on, so a contributor shares the
+    // view they are looking at and everyone else's links stay as before (#924).
+    const detail = $mappingDetail ? `?${DETAIL_PARAM}=1` : '';
+    const url = `${window.location.origin}${window.location.pathname}${detail}#${attr.osm_type}${attr.osm_id}`;
     try {
       if (navigator.share) {
         await navigator.share({ title: getPlaygroundTitle(attr, $_), url });
