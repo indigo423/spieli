@@ -437,6 +437,23 @@
         });
         return;
       }
+      // Standalone pitches (#934): only layers the shell marks `selectable`
+      // (the pitch layer, not the equipment overlay of a selected
+      // playground), and only the pitch itself, not benches on that layer.
+      // After the playground test, so a playground keeps its clicks.
+      const pitchHit = olMap.forEachFeatureAtPixel(
+        evt.pixel,
+        (f) => (f.get('leisure') === 'pitch' ? f : undefined),
+        { layerFilter: (l) => l.get('selectable') === true },
+      );
+      if (pitchHit) {
+        selection.select(pitchHit, defaultBackendUrl, 'pitch');
+        selectionZoom = null;
+        fitViewToSelection(view, pitchHit.getGeometry().getExtent(), (v) => {
+          selectionZoom = v.getZoom();
+        });
+        return;
+      }
       const clusterHit = olMap.forEachFeatureAtPixel(evt.pixel, (f) => f, {
         layerFilter: (l) => l === clusterLayer,
       });
@@ -630,7 +647,9 @@
 
   // Re-style the playground layer whenever filters, mapping detail or (in
   // finder mode, which outlines the selected polygon) the selection change.
-  $: selectedOsmId = $selection.feature?.get('osm_id') ?? null;
+  // Playgrounds only: a selected pitch (#934) may share its numeric osm_id
+  // with a playground, which would then be outlined instead.
+  $: selectedOsmId = $selection.kind === 'playground' ? ($selection.feature?.get('osm_id') ?? null) : null;
   $: if (playgroundLayer) {
     const filters = $effectiveFilterStore;
     const detail = $mappingDetail;

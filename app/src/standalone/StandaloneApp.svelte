@@ -22,7 +22,7 @@
   import { parseHash } from '../lib/deeplink.js';
   import { attachTieredOrchestrator } from '../lib/tieredOrchestrator.js';
   import { regionFitPadding } from '../lib/playgroundHelpers.js';
-  import { equipmentLayerStyleFn } from '../lib/vectorStyles.js';
+  import { equipmentLayerStyleFn, selectedPitchStyle } from '../lib/vectorStyles.js';
   import { pitchPinFor } from '../lib/finderStyle.js';
   import { mappingDetail } from '../stores/mappingDetail.js';
   import { debounce } from '../lib/utils.js';
@@ -202,8 +202,10 @@
       pitchLayer = new VectorLayer({
         source: pitchSource,
         zIndex: 9,
-        style: pitchLayerStyle(get(mappingDetail)),
-        properties: { kind: 'overlay' },
+        style: pitchLayerStyle(get(mappingDetail), null),
+        // `selectable`: Map's click handler may select pitches on this layer
+        // (#934); the equipment overlay of a selected playground is not.
+        properties: { kind: 'overlay', selectable: true },
       });
       map.addLayer(pitchLayer);
 
@@ -278,16 +280,22 @@
 
   // Pitches get a sport pin so they are findable before their polygon is big
   // enough to spot. With mapping detail on the polygon stays underneath; in
-  // the finder view the pin alone stands for the pitch, like playgrounds (#924).
-  function pitchLayerStyle(detail) {
+  // the finder view the pin alone stands for the pitch, like playgrounds
+  // (#924). The selected pitch is outlined in both modes (#934), matched by
+  // osm_id: a deeplinked pitch is not in this layer's source until the layer
+  // loads its area.
+  function pitchLayerStyle(detail, selectedId) {
     return feature => {
       const pin = pitchPinFor(feature);
-      if (pin && !detail) return pin;
-      const base = equipmentLayerStyleFn(feature);
-      return pin ? (base ? [base, pin] : pin) : base;
+      const selected = pin != null && selectedId != null && feature.get('osm_id') === selectedId;
+      const base = pin && !detail ? null : equipmentLayerStyleFn(feature);
+      const styles = [base, selected ? selectedPitchStyle : null, pin].filter(Boolean);
+      return styles.length > 1 ? styles : (styles[0] ?? null);
     };
   }
-  $: if (pitchLayer) pitchLayer.setStyle(pitchLayerStyle($mappingDetail));
+  $: selectedPitchId = $selection.feature && $selection.kind === 'pitch'
+    ? $selection.feature.get('osm_id') : null;
+  $: if (pitchLayer) pitchLayer.setStyle(pitchLayerStyle($mappingDetail, selectedPitchId));
 
   onDestroy(() => {
     detachTierDeselect();
