@@ -25,7 +25,7 @@
   import { litInfo } from '../lib/pitchInfo.js';
   import { COMPLETENESS_PALETTE } from '../lib/completenessPalette.js';
   import { poiRadiusM, appMode, mapMinZoom, regionLang } from '../lib/config.js';
-  import { getPlaygroundTitle, getPlaygroundLocation, hasOsmName } from '../lib/playgroundHelpers.js';
+  import { getPlaygroundTitle, getPlaygroundLocation, hasOsmName, navigationUrl, isMobileUserAgent } from '../lib/playgroundHelpers.js';
   import { aggregatePlaygroundThemes, areaThemesOf, themeIcon, themeName } from '../lib/playgroundThemes.js';
   import { summarizeEquipment } from '../lib/equipmentSummary.js';
   import { cn } from '../lib/utils.js';
@@ -475,26 +475,26 @@
     }
   }
 
-  // ── Navigation button ────────────────────────────────────────────────────
-  function navigateToPlayground() {
-    if (!attr || !Number.isFinite(centerLat) || !Number.isFinite(centerLon)) return;
-    const title = getPlaygroundTitle(attr, $_);
-    // Mobile: geo: URL opens native navigation app
-    // Desktop: OSM directions with stored GPS fix as origin (falls back to empty origin
-    // when location was never granted — OSM then prompts the user for a starting point).
-    // Note: origin may be stale if the user moved since the last watchPosition update.
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(navigator.userAgent);
-    const loc = $location;
-    const origin = loc ? `${loc.lat},${loc.lon}` : '';
-    const url = isMobile
-      ? `geo:${centerLat},${centerLon}?q=${centerLat},${centerLon}(${encodeURIComponent(title)})`
-      : `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${origin};${centerLat},${centerLon}`;
-    
-    const win = window.open(url, '_blank');
-    if (!win) {
-      console.warn('Navigation popup was blocked');
-    }
-  }
+  // ── Navigation link ──────────────────────────────────────────────────────
+  // Mobile: geo: URL opens native navigation app
+  // Desktop: OSM directions with stored GPS fix as origin (falls back to empty origin
+  // when location was never granted — OSM then prompts the user for a starting point).
+  // The href is reactive on the location store, so the origin follows every
+  // watchPosition update rather than being captured once.
+  //
+  // Rendered as a plain <a href>, not window.open(): iOS Safari silently drops a
+  // geo: URL opened via window.open(url, '_blank'), while the same URL as a
+  // same-tab link hands off to the maps app — as POIPanel's rows already did (#926).
+  // URL rules shared with the pitch panel: lib/playgroundHelpers.js.
+  const navIsMobile = isMobileUserAgent(navigator.userAgent);
+  $: navUrl = attr
+    ? navigationUrl({
+        lat: centerLat, lon: centerLon,
+        title: getPlaygroundTitle(attr, $_),
+        mobile: navIsMobile,
+        origin: $location,
+      })
+    : null;
 </script>
 
 {#if feature && attr}
@@ -515,7 +515,14 @@
           {/if}
         </div>
         <div class="flex items-center gap-1 shrink-0">
-          <button class="navigate-btn" onclick={navigateToPlayground} aria-label={$_('info.navigateHere')}>{$_('info.navigateHere')}</button>
+          {#if navUrl}
+            <a
+              class="navigate-btn"
+              href={navUrl}
+              target={navIsMobile ? undefined : '_blank'}
+              rel={navIsMobile ? undefined : 'noopener'}
+            >{$_('info.navigateHere')}</a>
+          {/if}
           <button class="panel-icon-btn" onclick={closePanel} aria-label={$_('info.closeBtn')}>
             <X class="h-5 w-5" />
           </button>
@@ -534,7 +541,14 @@
           {/if}
         </div>
         <div class="flex items-center gap-1">
-          <button class="navigate-btn" onclick={navigateToPlayground} aria-label={$_('info.navigateHere')}>{$_('info.navigateHere')}</button>
+          {#if navUrl}
+            <a
+              class="navigate-btn"
+              href={navUrl}
+              target={navIsMobile ? undefined : '_blank'}
+              rel={navIsMobile ? undefined : 'noopener'}
+            >{$_('info.navigateHere')}</a>
+          {/if}
           <button class="panel-icon-btn shrink-0" onclick={sharePlayground} aria-label={$_('info.copyLink')}>
             {#if shareConfirmed}
               <Check class="h-5 w-5 text-primary" />
@@ -1280,16 +1294,18 @@
   .navigate-btn {
     padding: 6px 12px;
     background: var(--color-primary);
-    color: #ffffff;
+    color: var(--color-primary-foreground);
     border: none;
     border-radius: 6px;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
+    text-decoration: none;
     transition: background 0.15s;
   }
   .navigate-btn:hover {
     background: var(--color-primary-hover);
+    color: var(--color-primary-foreground);
   }
 </style>
