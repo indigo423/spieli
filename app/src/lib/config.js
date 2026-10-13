@@ -1,6 +1,7 @@
 // Runtime configuration injected via window.APP_CONFIG (set by public/config.js or docker-entrypoint.app.sh).
 // Fallback values are used for local development without a container.
 import { parseCoverageBbox } from './basemapCoverage.js';
+import { resolveOpeningHoursAddress } from './openingHoursAddress.js';
 
 const c = (typeof window !== 'undefined' && window.APP_CONFIG) || {};
 
@@ -154,17 +155,17 @@ export const regionLang = c.regionLang || 'de';
 // `opening_hours` values.
 export const regionCountry = c.regionCountry || 'de';
 
-// Optional sub-country code for holiday calendars that vary by state (e.g.
-// 'he' for Hessen). Empty means "pass no state", which is what the app did
-// before this option existed — see docs/ops/configuration.md.
+// Optional state for holiday calendars that vary by state: a code ('he',
+// 'DE-HE') or the full name ('Hessen'). Empty means "pass no state", which is
+// what the app did before this option existed — see docs/ops/configuration.md.
 export const regionState = c.regionState || '';
 
 // `address` for the `opening_hours` constructor, shared by every call site so
-// they cannot drift apart. `state` is omitted unless configured: passing one
-// would change holiday evaluation for deployments that never asked for it.
-export const openingHoursAddress = regionState
-    ? { country_code: regionCountry, state: regionState }
-    : { country_code: regionCountry };
+// they cannot drift apart. Rules in openingHoursAddress.js (#878); a value it
+// cannot resolve is ignored, with a warning instead of the old silence.
+const resolvedHolidayAddress = resolveOpeningHoursAddress(regionCountry, regionState);
+if (resolvedHolidayAddress.warning) console.warn(`[config] ${resolvedHolidayAddress.warning}`);
+export const openingHoursAddress = resolvedHolidayAddress.address;
 
 // Legal pages — null hides the LegalButton entirely.
 export const impressumUrl = c.impressumUrl || null;

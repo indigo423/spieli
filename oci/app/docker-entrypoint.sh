@@ -33,7 +33,15 @@ safe_code() { printf '%s' "$1" | tr -cd 'A-Za-z0-9-'; }
 SAFE_DEFAULT_LOCALE=$(safe_code "${DEFAULT_LOCALE:-}")
 SAFE_REGION_LANG=$(safe_code    "${REGION_LANG:-de}")
 SAFE_REGION_COUNTRY=$(safe_code "${REGION_COUNTRY:-de}")
-SAFE_REGION_STATE=$(safe_code   "${REGION_STATE:-}")
+# REGION_STATE is a code ('he', 'DE-HE') or a full state name — the
+# opening_hours library keys holidays on names like "Thüringen" or
+# "Baden-Württemberg", and other countries' names contain spaces and accents.
+# safe_code stripped the umlauts, so two German states were unconfigurable
+# (#878). Still an allow-list: ASCII letters, digits, space, dot, hyphen, and
+# every non-ASCII byte (UTF-8 letters of any script; tr works on bytes). No
+# quote, backslash, backtick, angle bracket or control character gets through.
+safe_name() { printf '%s' "$1" | tr -cd 'A-Za-z0-9 .\200-\377-'; }
+SAFE_REGION_STATE=$(safe_name   "${REGION_STATE:-}")
 
 # Legal URLs — IMPRESSUM_URL / PRIVACY_URL override env vars take priority.
 # If unset, construct from SITE_URL + path (assuming nginx serves the
