@@ -10,9 +10,9 @@
 import { readable, writable, derived } from 'svelte/store';
 import { registryUrl, hubPollInterval } from '../lib/config.js';
 import { fetchMeta } from '../lib/api.js';
-import { isValidSlug } from '../lib/deeplink.js';
 import { startFederationHealthPoll, stopFederationHealthPoll } from './federationHealth.js';
 import { parseNominalCentroid } from './centroid.js';
+import { normaliseSlug, parseCountry, usableEntries } from './registryEntry.js';
 import booleanContains from '@turf/boolean-contains';
 
 /**
@@ -21,6 +21,7 @@ import booleanContains from '@turf/boolean-contains';
  *   url: string,
  *   name: string,
  *   slug: string | null,
+ *   country: string | null,                           // ISO 3166-1 alpha-2 from registry.json (#741)
  *   loading: boolean,
  *   error: string | null,
  *   version: string | null,
@@ -124,10 +125,11 @@ export function createRegistry() {
 
         // Support both { instances: [...] } and bare array formats
         const entries = Array.isArray(data) ? data : (data.instances ?? []);
-        backends = entries.map(entry => ({
-          url:              entry.url,
-          name:             entry.name || entry.url,
-          slug:             normaliseSlug(entry.slug, entry.url),
+        backends = usableEntries(entries).map(({ url, entry }) => ({
+          url,
+          name:             entry.name || url,
+          slug:             normaliseSlug(entry.slug, url),
+          country:          parseCountry(entry.country, url),  // optional ISO 3166-1 alpha-2, shown as a chip (#741)
           loading:          true,
           error:            null,
           version:          null,
@@ -138,7 +140,7 @@ export function createRegistry() {
           lastImportAt:     null,  // from get_meta.last_import_at; used by polygon-tier dedup (#202)
           relationId:       null,  // from get_meta.relation_id; used for region-URL → backend matching (#661)
           regionGeom:       null,  // GeoJSON Feature geometry from get_meta.region_geom; used for polygon overlap detection (#532)
-          nominalCentroid:       parseNominalCentroid(entry.centroid, entry.url),  // fallback position for null-bbox backends (#598)
+          nominalCentroid:       parseNominalCentroid(entry.centroid, url),  // fallback position for null-bbox backends (#598)
           _lastImportAtOverride: entry.lastImportAt ?? null,  // registry.json static override; takes priority over meta on every poll
           // Populated from /federation-status.json (hub-side cron poll, this change)
           healthUp:         null,  // null = unknown, true/false = known
@@ -274,13 +276,4 @@ export function createRegistry() {
     aggregatedBbox,
     overlapWarnings,
   };
-}
-
-/** Normalises a slug value from the registry. Invalid slugs log a warning
- *  and are treated as missing, so the rest of the registry entry still works. */
-function normaliseSlug(raw, url) {
-  if (raw === undefined || raw === null || raw === '') return null;
-  if (isValidSlug(raw)) return raw;
-  console.warn(`[registry] invalid slug "${raw}" on backend ${url} — treating as missing`);
-  return null;
 }

@@ -1,8 +1,24 @@
 <script>
-  import { _ } from 'svelte-i18n';
+  import { _, locale } from 'svelte-i18n';
   import { X } from 'lucide-svelte';
   import LegalContentModal from '../components/LegalContentModal.svelte';
   import { COMPLETENESS_BASE } from '../lib/completenessPalette.js';
+
+  // Full country name for the chip's accessible label (#741): the bare code
+  // reads as "ess kay". Intl knows every name in every locale, so no strings
+  // for Weblate translators to chase; the code is the fallback.
+  // One formatter per locale: the drawer re-renders on every backend patch
+  // and health poll, and constructing DisplayNames is not free.
+  const displayNames = new Map();
+  function countryName(code, loc) {
+    try {
+      const key = loc || 'en';
+      if (!displayNames.has(key)) displayNames.set(key, new Intl.DisplayNames([key], { type: 'region' }));
+      return displayNames.get(key).of(code) ?? code;
+    } catch {
+      return code;
+    }
+  }
 
   // Dots and bar segments read the shared mapping-detail palette rather than
   // hardcoding hexes in <style> — a <style> block can't import, so the colours
@@ -161,6 +177,15 @@
         <li class="instance-item" class:instance-item--highlighted={b.url === highlightedBackendUrl}>
           <div class="instance-row">
             <span class="instance-name">{b.name}</span>
+            {#if b.country}
+              {@const country = countryName(b.country, $locale)}
+              <!-- Only entries that set `country` get a chip: the federation is
+                   almost all German, so marking the exception says the most.
+                   aria-label on a role-less span is ignored by screen readers,
+                   so the code is hidden from them and the full name is read
+                   from visually hidden text instead. -->
+              <span class="country-chip" title={country}><span aria-hidden="true">{b.country}</span><span class="visually-hidden">{country}</span></span>
+            {/if}
             <div class="instance-row-end">
               <button
                 class="legal-btn"
@@ -372,6 +397,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .country-chip {
+    flex-shrink: 0;
+    /* Sits right after the name; the row is space-between, so without this
+       it would float in the middle. */
+    margin-right: auto;
+    padding: 0 0.3rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.3;
+    color: #4b5563;
   }
 
   .instance-row-end {

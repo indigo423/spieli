@@ -103,3 +103,4 @@ function selectCentroid(bbox, nominalCentroid) {
   assert.equal(bboxCentroid(null), null);
   assert.equal(bboxCentroid([8.0, 50.0, 9.0]), null); // wrong length
 }
+
