@@ -21,6 +21,7 @@ import {
   stubHubRegistry,
   stubFederationStatus,
   makePlayground,
+  waitForHubSettled,
 } from './helpers.js';
 
 const instanceA = {
@@ -55,10 +56,12 @@ const instanceB = {
   },
 };
 
-/** Open the instance drawer by clicking the pill. Waits for the pill to appear first. */
-async function openDrawer(page) {
-  const pill = page.locator('.instance-slot .pill');
-  await expect(pill).toContainText(/2\s+(Regionen|regions)/, { timeout: 8000 });
+/**
+ * Open the instance drawer by clicking the pill, once the hub has settled on
+ * `regions` reachable regions (see waitForHubSettled, #810).
+ */
+async function openDrawer(page, { regions = 2 } = {}) {
+  const pill = await waitForHubSettled(page, { regions });
   await pill.click();
   const drawer = page.locator('.drawer[role="dialog"]');
   await expect(drawer).toBeVisible();
@@ -116,7 +119,8 @@ test.describe('Hub federation health drawer', () => {
     await page.route('**/api-b/rpc/get_meta**', route => route.abort('failed'));
 
     await page.goto('/');
-    const drawer = await openDrawer(page);
+    // B's get_meta fails, so only A counts as reachable.
+    const drawer = await openDrawer(page, { regions: 1 });
 
     // The "last reachable N min ago" text should appear for the down backend
     await expect(drawer).toContainText(/5\s*min/, { timeout: 5000 });
