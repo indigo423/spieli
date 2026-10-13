@@ -153,6 +153,66 @@ test.describe('German header', () => {
   }
 });
 
+test.describe('example illustration (#968)', () => {
+  test('a pitch with no photo shows its sport\'s example illustration', async ({ page }) => {
+    await injectApiConfig(page);
+    await stubApiRoutes(page);
+    const tt = pitch(503, { sport: 'table_tennis' });
+    await stubPitches(page, [tt]);
+    await page.route(/\/ext\/wikimedia\/|wikimedia\.org/, route => route.fulfill({
+      status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+    }));
+    await page.goto('/#P503');
+    const panel = page.locator('aside.pitch-panel');
+    await expect(panel).toBeVisible({ timeout: 8000 });
+    const ill = panel.locator('.pitch-illustration');
+    await expect(ill.locator('img')).toHaveAttribute('src', /Table_Tennis_Table_Blue/);
+    await expect(ill).toContainText(/Example image|Symbolbild/);
+  });
+
+  test('photo tags that resolve to nothing fall back to the illustration', async ({ page }) => {
+    await injectApiConfig(page);
+    await stubApiRoutes(page);
+    // An image= on a host the gallery does not render resolves to no photos.
+    await stubPitches(page, [pitch(505, { sport: 'table_tennis', image: 'https://example.com/x.jpg' })]);
+    await page.route(/\/ext\/wikimedia\/|wikimedia\.org/, route => route.fulfill({
+      status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+    }));
+    await page.goto('/#P505');
+    const panel = page.locator('aside.pitch-panel');
+    await expect(panel.locator('.pitch-illustration img')).toBeVisible({ timeout: 8000 });
+    await expect(panel.locator('.section-label', { hasText: /Photos|Fotos/ })).toHaveCount(0);
+  });
+
+  test('a failed illustration hides its whole section', async ({ page }) => {
+    await injectApiConfig(page);
+    await stubApiRoutes(page);
+    await stubPitches(page, [pitch(506, { sport: 'table_tennis' })]);
+    await page.route(/\/ext\/wikimedia\/|wikimedia\.org/, route => route.fulfill({ status: 404, body: '' }));
+    await page.goto('/#P506');
+    await expect(page.locator('aside.pitch-panel')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('aside.pitch-panel .pitch-illustration')).toBeHidden();
+  });
+
+  test('panoramax:0 counts as a photo, as in the playground panel', async ({ page }) => {
+    await injectApiConfig(page);
+    await stubApiRoutes(page);
+    await stubPitches(page, [pitch(507, { sport: 'table_tennis', 'panoramax:0': 'a3dde228-46c5-45aa-8d77-3aecae9257e6' })]);
+    await page.goto('/#P507');
+    await expect(page.locator('aside.pitch-panel')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('aside.pitch-panel .pitch-illustration')).toHaveCount(0);
+  });
+
+  test('a pitch with a photo shows the photo, not the illustration', async ({ page }) => {
+    await injectApiConfig(page);
+    await stubApiRoutes(page);
+    await stubPitches(page, [pitch(504, { sport: 'table_tennis', panoramax: 'a3dde228-46c5-45aa-8d77-3aecae9257e6' })]);
+    await page.goto('/#P504');
+    await expect(page.locator('aside.pitch-panel')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('aside.pitch-panel .pitch-illustration')).toHaveCount(0);
+  });
+});
+
 test.describe('#P links', () => {
   test('restores the pitch, switches the layer on and frames it', async ({ page }) => {
     await injectApiConfig(page);
