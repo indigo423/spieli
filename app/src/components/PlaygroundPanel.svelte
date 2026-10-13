@@ -35,6 +35,7 @@
   import PanoramaxViewer from './PanoramaxViewer.svelte';
   import CommonsGallery from './CommonsGallery.svelte';
   import ReviewsPanel from './ReviewsPanel.svelte';
+  import { radiusFromExtent } from '../lib/reviews.js';
   import Badge from './ui/Badge.svelte';
   import Button from './ui/Button.svelte';
 
@@ -208,6 +209,8 @@
 
   // Centre of selected playground in WGS84
   let centerLat = 0, centerLon = 0;
+  // The Mangrove subject's radius (#914), rule in lib/reviews.js.
+  let reviewRadiusM = null;
 
   // Generation counter — incremented on each new selection so stale responses are discarded.
   let loadGen = 0;
@@ -234,6 +237,7 @@
     );
     centerLat = lat;
     centerLon = lon;
+    reviewRadiusM = radiusFromExtent(ext);
 
     equipmentLoading = true;
     poisLoading = true;
@@ -887,7 +891,7 @@
           </button>
           {#if openSections.has('reviews')}
             <div class="pb-3">
-              <ReviewsPanel lat={centerLat} lon={centerLon} osmId={attr?.osm_id} />
+              <ReviewsPanel lat={centerLat} lon={centerLon} osmId={attr?.osm_id} name={attr?.name ?? null} radiusM={reviewRadiusM} />
             </div>
           {/if}
         </div>

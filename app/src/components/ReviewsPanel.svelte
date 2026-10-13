@@ -1,14 +1,17 @@
 <script>
-  import { fetchReviewsCached, invalidateReviews, submitReview, starsHtml, relativeDate } from '../lib/reviews.js';
+  import { fetchReviewsCached, addOwnReview, submitReview, starsHtml, relativeDate } from '../lib/reviews.js';
   import { _ } from 'svelte-i18n';
-  import { onDestroy } from 'svelte';
 
   /** @type {number} Playground centre latitude (WGS84) */
   export let lat = 0;
   /** @type {number} Playground centre longitude (WGS84) */
   export let lon = 0;
-  /** @type {string|number|null} OSM ID of the playground — scopes reviews to this specific location. */
+  /** @type {string|number|null} OSM ID of the playground — reads the reviews spieli filed under it before #914. */
   export let osmId = null;
+  /** @type {string|null} Playground name — the label Mangrove clients file named places under. */
+  export let name = null;
+  /** @type {number|null} Playground radius in metres — the subject's uncertainty, like MapComplete's. */
+  export let radiusM = null;
 
   let reviews = [];
   let loading = true;
@@ -22,9 +25,6 @@
   let submitStatus = '';       // success/error message
 
   let abortCtrl = null;
-  let refreshTimer = null;
-
-  onDestroy(() => clearTimeout(refreshTimer));
 
   // This component is mounted by a collapsed accordion section in
   // PlaygroundPanel, so it exists only once the visitor has expanded reviews.
@@ -32,7 +32,9 @@
   // osmId: the open panel must show the selected playground's reviews, not the
   // previous one's. fetchReviewsCached makes a return to an already-seen
   // playground free rather than another request.
-  $: if (osmId) loadReviews();
+  // name and radiusM are part of the subjects, so they re-trigger the load too:
+  // a load must never run with one playground's id and another's name.
+  $: if (osmId) loadReviews(osmId, name, radiusM);
 
   async function loadReviews() {
     abortCtrl?.abort();
@@ -40,7 +42,7 @@
     loading = true;
     error = false;
     try {
-      reviews = await fetchReviewsCached(lat, lon, osmId, abortCtrl.signal);
+      reviews = await fetchReviewsCached(lat, lon, osmId, abortCtrl.signal, { name, radiusM });
     } catch (e) {
       if (e?.name !== 'AbortError') error = true;
     } finally {
@@ -56,26 +58,21 @@
     // point at a different playground by the time the await below resolves.
     // Reading them afterwards would invalidate the wrong subject and leave the
     // submitted one holding a stale list for the rest of the page's life.
-    const target = { lat, lon, osmId };
+    const target = { lat, lon, osmId, opts: { name, radiusM } };
     submitting = true;
     submitStatus = '';
     try {
-      const ok = await submitReview(target.lat, target.lon, target.osmId, selectedRating, opinion.trim() || null);
-      if (ok) {
+      const own = await submitReview(target.lat, target.lon, selectedRating, opinion.trim() || null, target.opts);
+      if (own) {
         submitStatus = 'success';
         selectedRating = null;
         opinion = '';
-        // Without this the refresh below is served from the session cache and
-        // the visitor never sees the review they just submitted.
-        invalidateReviews(target.lat, target.lon, target.osmId);
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(() => {
-          // Only refresh if that playground is still the one on screen.
-          // loadReviews() reads the current props and aborts whatever is in
-          // flight, so firing it blindly would abandon the newly selected
-          // playground's load and re-request it.
-          if (osmId === target.osmId) loadReviews();
-        }, 1500);
+        // Show it from what we just signed rather than re-reading: the proxy
+        // caches each subject's answer for minutes, so a re-read would return
+        // the list without it.
+        const list = await addOwnReview(target.lat, target.lon, target.osmId, target.opts, own);
+        // Only if that playground is still the one on screen.
+        if (osmId === target.osmId) { reviews = list; error = false; }
       } else {
         submitStatus = 'error';
       }
