@@ -1384,6 +1384,25 @@ $$;
 GRANT EXECUTE ON FUNCTION api.get_pitch(bigint) TO web_anon;
 
 -- =========================================================================
+-- metres_to_3857(metres, lat)
+--    A ground distance in EPSG:3857 units at the given latitude. Web
+--    Mercator units are stretched by 1/cos(latitude), so a metre value
+--    compared against `way` geometries directly shrinks by cos(lat) — 5 km
+--    became about 3.2 km in Fulda (#954). Scaling the distance, rather than
+--    casting to geography, keeps the GiST index on `way` usable; over a few
+--    km the scale factor barely changes. Latitude is clamped to the
+--    Mercator limit, so a pole or an out-of-range value cannot blow the
+--    distance up or turn it negative. In `public`, not `api`: a helper,
+--    not an RPC.
+-- =========================================================================
+CREATE OR REPLACE FUNCTION public.metres_to_3857(metres float8, lat float8)
+RETURNS float8
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+  SELECT metres / cos(radians(LEAST(GREATEST(lat, -85.05), 85.05)));
+$$;
+
+-- =========================================================================
 -- 4. get_pois(lat, lon, radius_m)
 --    Returns nearby POIs within radius_m metres of the given point.
 --    Return shape matches the existing frontend: array of
@@ -1404,7 +1423,10 @@ AS $$
     SELECT ST_Transform(
       ST_SetSRID(ST_MakePoint(lon, lat), 4326),
       3857
-    ) AS geom
+    ) AS geom,
+    -- radius_m is ground metres (#954), capped so an anonymous call cannot
+    -- ask for the whole import in one response.
+    public.metres_to_3857(LEAST(GREATEST(radius_m, 0), 20000), lat) AS radius_3857
   ),
   pois_point AS (
     SELECT
@@ -1417,7 +1439,7 @@ AS $$
       ST_Y(ST_Transform(p.way, 4326)) AS poi_lat,
       ST_X(ST_Transform(p.way, 4326)) AS poi_lon
     FROM planet_osm_point p, center c
-    WHERE ST_DWithin(p.way, c.geom, radius_m)
+    WHERE ST_DWithin(p.way, c.geom, c.radius_3857)
       AND (
         p.amenity IN ('toilets', 'ice_cream')
         OR (p.amenity IN ('cafe', 'restaurant') AND p.tags->'cuisine' ~* 'ice_cream')
@@ -1439,7 +1461,12 @@ AS $$
       ST_Y(ST_Transform(ST_Centroid(p.way), 4326)) AS poi_lat,
       ST_X(ST_Transform(ST_Centroid(p.way), 4326)) AS poi_lon
     FROM planet_osm_polygon p, center c
-    WHERE ST_DWithin(p.way, c.geom, radius_m)
+    -- The polygon test uses the index; the centroid test keeps the result
+    -- consistent with the position reported, which is the centroid — a
+    -- supermarket whose edge is in range but whose centroid is not would
+    -- otherwise be listed beyond the radius.
+    WHERE ST_DWithin(p.way, c.geom, c.radius_3857)
+      AND ST_DWithin(ST_Centroid(p.way), c.geom, c.radius_3857)
       AND (
         p.amenity IN ('toilets', 'ice_cream')
         OR (p.amenity IN ('cafe', 'restaurant') AND p.tags->'cuisine' ~* 'ice_cream')
