@@ -19,6 +19,10 @@
 #                                Both MIN and MAX must be set to enable daemon mode.
 #   REIMPORT_INTERVAL_MAX_DAYS   Maximum days between automatic re-imports (daemon mode).
 #                                A uniformly random interval in [MIN, MAX] is chosen each cycle.
+#   REIMPORT_JITTER_HOURS        Default: 6. A random 0–N h added to every scheduled wait
+#                                (and before an overdue import at startup), so stacks that
+#                                once imported together drift apart instead of keeping a
+#                                shared slot forever (#882). 0 disables it.
 #   API_ONLY                     When non-empty, skip PBF download and osm2pgsql import.
 #                                Only re-apply api.sql and reload PostgREST. Use to update
 #                                API functions (e.g. after a version bump) without a full
@@ -58,6 +62,7 @@ PG_WORK_MEM="${PG_WORK_MEM:-32MB}"
 REIMPORT_INTERVAL_MIN_DAYS="${REIMPORT_INTERVAL_MIN_DAYS:-}"
 REIMPORT_INTERVAL_MAX_DAYS="${REIMPORT_INTERVAL_MAX_DAYS:-}"
 REIMPORT_STARTUP_JITTER_MAX_HOURS="${REIMPORT_STARTUP_JITTER_MAX_HOURS:-0}"
+REIMPORT_JITTER_HOURS="${REIMPORT_JITTER_HOURS:-6}"
 API_ONLY="${API_ONLY:-}"
 
 # Validate PG_* before they reach envsubst → SQL. Strict regexes prevent
@@ -148,11 +153,42 @@ _clear_importing() {
         2>/dev/null || true
 }
 
+# Helper: a random non-negative integer from /dev/urandom. awk's srand()
+# seeds from the current second, so containers started together (compose up,
+# an upgrade sweep, a host reboot) all drew the *same* "random" interval and
+# jitter — the opposite of what both exist for (#882).
+_urandom_int() {
+    od -An -N4 -tu4 /dev/urandom | tr -d ' '
+}
+
 # Helper: pick a uniformly random integer in [MIN_DAYS, MAX_DAYS].
 _random_days() {
-    awk -v min="$REIMPORT_INTERVAL_MIN_DAYS" \
-        -v max="$REIMPORT_INTERVAL_MAX_DAYS" \
-        'BEGIN { srand(); print min + int(rand() * (max - min + 1)) }'
+    echo $(( REIMPORT_INTERVAL_MIN_DAYS + $(_urandom_int) % (REIMPORT_INTERVAL_MAX_DAYS - REIMPORT_INTERVAL_MIN_DAYS + 1) ))
+}
+
+# Helper: random seconds in [0, HOURS h). HOURS must already be a validated
+# decimal integer (see _int_or below); 0 gives 0.
+_jitter_secs() {
+    [ "$1" -gt 0 ] || { echo 0; return; }
+    echo $(( $(_urandom_int) % ($1 * 3600) ))
+}
+
+# Helper: print $2 as a decimal integer, or $3 with a warning naming $1 when
+# it is not one. Spaces are trimmed and leading zeros dropped — "08" would
+# otherwise be read as invalid octal by $(( )) and abort the script — and a
+# typo like "6h" no longer silently disables a setting (#882 review).
+_int_or() {
+    _v=$(printf '%s' "$2" | tr -d ' ')
+    case "$_v" in
+        ''|*[!0-9]*) echo "[importer] WARNING: $1=\"$2\" is not a whole number — using $3." >&2; echo "$3" ;;
+        *) printf '%s\n' "$_v" | sed 's/^0*\(.\)/\1/' ;;
+    esac
+}
+
+# Helper: an epoch second as UTC, for log lines an operator can compare across
+# stacks without knowing when the line was written.
+_at() {
+    date -u -d "@$1" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "epoch $1"
 }
 
 # =========================================================================== #
@@ -581,7 +617,26 @@ if [ -n "$API_ONLY" ]; then
     run_api_apply
 elif [ -n "$REIMPORT_INTERVAL_MIN_DAYS" ] && [ -n "$REIMPORT_INTERVAL_MAX_DAYS" ]; then
     # ── Daemon mode ─────────────────────────────────────────────────────────── #
-    echo "[importer] Daemon mode: interval ${REIMPORT_INTERVAL_MIN_DAYS}–${REIMPORT_INTERVAL_MAX_DAYS} days."
+    # Validate before anything sleeps on them: a non-integer used to abort the
+    # shell arithmetic and restart-loop the container, and MIN > MAX made
+    # _random_days divide by zero or return a negative interval — which the
+    # grace check then read as overdue, importing back to back.
+    REIMPORT_INTERVAL_MIN_DAYS=$(_int_or REIMPORT_INTERVAL_MIN_DAYS "$REIMPORT_INTERVAL_MIN_DAYS" 1)
+    REIMPORT_INTERVAL_MAX_DAYS=$(_int_or REIMPORT_INTERVAL_MAX_DAYS "$REIMPORT_INTERVAL_MAX_DAYS" "$REIMPORT_INTERVAL_MIN_DAYS")
+    [ "$REIMPORT_INTERVAL_MIN_DAYS" -ge 1 ] || REIMPORT_INTERVAL_MIN_DAYS=1
+    if [ "$REIMPORT_INTERVAL_MIN_DAYS" -gt "$REIMPORT_INTERVAL_MAX_DAYS" ]; then
+        echo "[importer] WARNING: REIMPORT_INTERVAL_MIN_DAYS > MAX_DAYS — swapping them." >&2
+        _t=$REIMPORT_INTERVAL_MIN_DAYS
+        REIMPORT_INTERVAL_MIN_DAYS=$REIMPORT_INTERVAL_MAX_DAYS
+        REIMPORT_INTERVAL_MAX_DAYS=$_t
+    fi
+    REIMPORT_JITTER_HOURS=$(_int_or REIMPORT_JITTER_HOURS "$REIMPORT_JITTER_HOURS" 6)
+    REIMPORT_STARTUP_JITTER_MAX_HOURS=$(_int_or REIMPORT_STARTUP_JITTER_MAX_HOURS "$REIMPORT_STARTUP_JITTER_MAX_HOURS" 0)
+
+    echo "[importer] Daemon mode: interval ${REIMPORT_INTERVAL_MIN_DAYS}–${REIMPORT_INTERVAL_MAX_DAYS} days, jitter up to ${REIMPORT_JITTER_HOURS}h."
+    if [ "$REIMPORT_INTERVAL_MIN_DAYS" = "$REIMPORT_INTERVAL_MAX_DAYS" ] && [ "$REIMPORT_JITTER_HOURS" = 0 ]; then
+        echo "[importer] WARNING: REIMPORT_INTERVAL_MIN_DAYS = MAX_DAYS and REIMPORT_JITTER_HOURS=0 — each import starts a fixed interval after the previous one finished, so stacks with similar import times that once imported together keep doing so (#882)." >&2
+    fi
 
     # Clear any stuck importing flag left by a previously SIGKILL'd container.
     # POSIX sh EXIT traps don't fire on SIGKILL, so this startup reset is the
@@ -664,22 +719,38 @@ elif [ -n "$REIMPORT_INTERVAL_MIN_DAYS" ] && [ -n "$REIMPORT_INTERVAL_MAX_DAYS" 
 
     if [ -n "$LAST_TS" ]; then
         GRACE_DAYS=$(_random_days)
+        JITTER_SECS=$(_jitter_secs "$REIMPORT_JITTER_HOURS")
         NOW=$(date +%s)
-        NEXT_RUN=$((LAST_TS + GRACE_DAYS * 86400))
+        NEXT_RUN=$((LAST_TS + GRACE_DAYS * 86400 + JITTER_SECS))
+        # The latest an overdue import may still be held back: MAX_DAYS plus
+        # one jitter window. Measured from last_import_at, not from this start,
+        # so repeated restarts (Watchtower, several sweeps a day) cannot keep
+        # pushing an overdue import out with a fresh random wait each time.
+        DEADLINE=$((LAST_TS + REIMPORT_INTERVAL_MAX_DAYS * 86400 + REIMPORT_JITTER_HOURS * 3600))
         if [ "$NOW" -lt "$NEXT_RUN" ]; then
             SLEEP_SECS=$((NEXT_RUN - NOW))
-            echo "[importer] Last import < ${GRACE_DAYS}d ago. Sleeping ${SLEEP_SECS}s until next scheduled run."
+            echo "[importer] Last import $(_at "$LAST_TS"); next run in ${GRACE_DAYS}d + ${JITTER_SECS}s jitter, at $(_at "$NEXT_RUN")."
             sleep "$SLEEP_SECS"
+        elif [ "$NOW" -lt "$DEADLINE" ]; then
+            # Overdue. An upgrade sweep or a host reboot restarts every stack
+            # within minutes, and importing at once would stamp all overdue
+            # stacks with the same last_import_at — the shared slot #882
+            # measured (four imports inside 45 min, every day). Spread them,
+            # but never past the deadline.
+            WAIT=$(( JITTER_SECS < DEADLINE - NOW ? JITTER_SECS : DEADLINE - NOW ))
+            echo "[importer] Import overdue — waiting ${WAIT}s so restarted stacks do not import together; next run at $(_at $((NOW + WAIT)))."
+            sleep "$WAIT"
+        else
+            echo "[importer] Import overdue past MAX_DAYS + jitter — importing now."
         fi
     else
         # Fresh DB (no prior import_status record). On multi-backend deployments
         # all containers start simultaneously, causing a thundering herd of
         # concurrent osm2pgsql processes that exhausts host memory.
         # REIMPORT_STARTUP_JITTER_MAX_HOURS spreads first imports over time.
-        if [ "$REIMPORT_STARTUP_JITTER_MAX_HOURS" -gt 0 ] 2>/dev/null; then
-            JITTER_SECS=$(awk -v max="$REIMPORT_STARTUP_JITTER_MAX_HOURS" \
-                'BEGIN { srand(); print int(rand() * max * 3600) }')
-            echo "[importer] Fresh install — startup jitter: sleeping ${JITTER_SECS}s (max ${REIMPORT_STARTUP_JITTER_MAX_HOURS}h) to avoid thundering herd."
+        JITTER_SECS=$(_jitter_secs "$REIMPORT_STARTUP_JITTER_MAX_HOURS")
+        if [ "$JITTER_SECS" -gt 0 ]; then
+            echo "[importer] Fresh install — startup jitter: sleeping ${JITTER_SECS}s (max ${REIMPORT_STARTUP_JITTER_MAX_HOURS}h), first import at $(_at $(($(date +%s) + JITTER_SECS)))."
             sleep "$JITTER_SECS"
         fi
     fi
@@ -694,8 +765,13 @@ elif [ -n "$REIMPORT_INTERVAL_MIN_DAYS" ] && [ -n "$REIMPORT_INTERVAL_MAX_DAYS" 
             continue
         fi
         DAYS=$(_random_days)
-        echo "[importer] Sleeping ${DAYS} days until next import."
-        sleep $((DAYS * 86400))
+        # The jitter is what moves two stacks that share a slot apart again:
+        # each cycle adds an independent offset, so slots drift instead of
+        # staying wherever the last restart stamped them — also when
+        # MIN == MAX, where only each stack's own import duration moves it.
+        JITTER_SECS=$(_jitter_secs "$REIMPORT_JITTER_HOURS")
+        echo "[importer] Sleeping ${DAYS} days + ${JITTER_SECS}s; next run at $(_at $(($(date +%s) + DAYS * 86400 + JITTER_SECS)))."
+        sleep $((DAYS * 86400 + JITTER_SECS))
     done
 else
     # ── One-shot mode (default, backward-compatible) ─────────────────────── #

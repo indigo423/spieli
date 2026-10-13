@@ -62,7 +62,43 @@ Check that it entered daemon mode:
 
 ```bash
 docker compose logs importer | grep -i daemon
-# [importer] Daemon mode: interval 6–8 days.
+# [importer] Daemon mode: interval 6–8 days, jitter up to 6h.
+```
+
+### Keeping stacks from importing at the same time
+
+Several stacks on one host must not run `osm2pgsql` together — it is the
+memory peak of the whole pipeline. Two mechanisms spread them out (#882):
+
+- **`REIMPORT_JITTER_HOURS`** (default `6`) adds a random 0–6 h to every
+  scheduled wait, and delays an import that is already overdue at startup by
+  the same amount — but never past `MAX_DAYS` plus one jitter window after the
+  last import, so frequent restarts cannot keep postponing it. Without it, a
+  restart of every stack (an upgrade sweep, a host reboot) stamped all overdue
+  stacks with nearly the same `last_import_at`; with `MIN == MAX` each stack
+  then only moved by its own import duration, so stacks with similar import
+  times kept their shared slot. With it, slots drift apart every cycle. Set
+  it to `0` only if a single stack runs on the host.
+
+Jitter makes overlap unlikely, not impossible: there is no lock between
+stacks on one host (tracked in #961).
+- **`REIMPORT_STARTUP_JITTER_MAX_HOURS`** (default `0`) staggers the *first*
+  import on a fresh database, for deploying many stacks at once.
+
+Both draw from `/dev/urandom`. Before #882 they were seeded from the clock's
+current second, so containers started together drew the same "random" value.
+Values that are not whole numbers are replaced by the default with a warning
+in the importer log, as is `MIN > MAX` (swapped).
+
+Every wait logs the absolute time of the next run, so the spread on a host is
+one loop away:
+
+```bash
+for d in ~/spieli-*; do
+  printf '%-28s ' "$(basename "$d")"
+  docker compose --project-directory "$d" logs importer 2>/dev/null \
+    | grep -o 'next run at .*' | tail -n 1
+done
 ```
 
 ## Automatic image updates with Watchtower
