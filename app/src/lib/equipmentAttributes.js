@@ -16,8 +16,8 @@ import { escapeHtml, tl } from './utils.js';
 // chain ONCE at build time. Doing it here at runtime is what forced the
 // browser to contact commons.wikimedia.org directly, then fall back to
 // wiki.openstreetmap.org on a 404 — a host no disclosure named and no CSP
-// allowed — and to make two failing requests for the 14 names that exist on
-// neither wiki.
+// allowed — and to make two failing requests for every name that existed on
+// neither wiki (14 pitch names, until #867 replaced them).
 //
 // Returning null for an unknown name is the point: nothing is rendered, so a
 // missing illustration costs no request and shows no broken image. The build
@@ -47,25 +47,38 @@ function resolvedImage(fileName) {
     return { url, license: entry.license, artist: entry.artist, source: entry.source };
 }
 
-const pitchImages = {
-    soccer:'File:Association football pitch imperial.svg',
-    basketball:'File:Basketball court dimensions in meters.svg',
-    table_tennis:'File:Table tennis table blue.jpg',
-    volleyball:'File:Volleyball court with dimensions.svg',
-    tennis:'File:Hard tennis court 1.jpg',
-    handball:'File:Handball court metric.svg',
-    badminton:'File:Badminton court 8shuttle.svg',
-    hockey:'File:Field Hockey Pitch Dimensions.svg',
-    field_hockey:'File:Field Hockey Pitch Dimensions.svg',
-    boules:'File:Boules-coloured.jpg',
-    petanque:'File:Boules-coloured.jpg',
-    multi:'File:Multi-use games area.jpg',
-    skateboard:'File:Skatepark Vienna Praterstern 2015.jpg',
-    bmx:'File:BMX track Canberra.jpg',
+// Every title was checked to exist on Commons and to show what it claims
+// (#867: 14 of the previous names resolved nowhere, so only athletics had ever
+// rendered). Hockey has no free pitch diagram on Commons, so it has no entry —
+// an absent entry renders nothing, which is what a wrong one did. Several are
+// photos of real places, so the pitch caption says "example image" like the
+// device one. Exported for the tests, which iterate it.
+export const pitchImages = {
+    soccer:'File:Football pitch metric.svg',
+    basketball:'File:Basketball court fiba.svg',
+    table_tennis:'File:Table Tennis Table Blue.svg',
+    volleyball:'File:VolleyballCourt.svg',
+    tennis:'File:Tennis court metric.svg',
+    handball:'File:Handball Field diagram -en.svg',
+    badminton:'File:Badminton court.svg',
+    boules:'File:Haute-Avesnes - Terrain de pétanque du stade.jpg',
+    petanque:'File:Haute-Avesnes - Terrain de pétanque du stade.jpg',
+    multi:'File:Great Central Road Multi-use Games Area, Loughborough.jpg',
+    skateboard:'File:Solvang Skatepark.jpg',
+    bmx:'File:BMX Pump Track, Whitley Bay, UK.jpg',
     athletics:'File:Athletics track.jpg',
-    beachvolleyball:'File:BeachvolleyballAthens04.jpg',
-    climbing:'File:Outdoor bouldering wall.jpg',
+    beachvolleyball:'File:Beach volleyball court in Kaukajärvi, Tampere, Finland.jpg',
+    climbing:'File:Urduliz outdoor climbing wall.jpg',
 };
+
+// `sport` may list several sports (`soccer;basketball`, common on multi-use
+// courts): a single sport gets its own illustration, several get the
+// multi-use one.
+function pitchImageFor(sportRaw) {
+    const sports = sportRaw.split(';').map(s => s.trim()).filter(Boolean);
+    if (sports.length > 1) return pitchImages.multi;
+    return pitchImages[sports[0]] ?? null;
+}
 
 /**
  * Returns detail attributes for a single equipment item.
@@ -194,15 +207,15 @@ export function getEquipmentAttributesFromProps(props, t) {
                     `<p class="mb-0 text-muted" style="font-size:0.75rem;"><span class="bi bi-image"></span> ` +
                     `${escapeHtml(t('popup.deviceSymbol'))}${imageCredit(img)}</p></div>`;
             }
-        } else if (leisure === 'pitch' && sportRaw && pitchImages[sportRaw]) {
-            const img = resolvedImage(pitchImages[sportRaw]);
+        } else if (leisure === 'pitch' && sportRaw && pitchImageFor(sportRaw)) {
+            const img = resolvedImage(pitchImageFor(sportRaw));
             if (img) {
                 html = `<div class="device-img-wrap">` +
                     `<img src="${escapeHtml(img.url)}"` +
                     ` alt="${escapeHtml(sportRaw)}" loading="lazy" referrerpolicy="no-referrer"` +
                     ` onerror="${onerror}" style="object-fit:contain;width:100%">` +
-                    (imageCredit(img) ? `<p class="mb-0 text-muted" style="font-size:0.7rem;">${imageCredit(img).trim()}</p>` : '') +
-                    `</div>`;
+                    `<p class="mb-0 text-muted" style="font-size:0.75rem;"><span class="bi bi-image"></span> ` +
+                    `${escapeHtml(t('popup.deviceSymbol'))}${imageCredit(img)}</p></div>`;
             }
         }
     }

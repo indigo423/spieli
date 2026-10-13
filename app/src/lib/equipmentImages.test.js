@@ -64,6 +64,31 @@ const t = (key) => key;   // the translate function is only used for labels
     assert.ok(rendered > 30, `expected many illustrations to render, got ${rendered}`);
 }
 
+// --- every pitch illustration renders, through the proxy (#867) -----------
+// Iterates the table itself, so an entry added or dropped later cannot drift
+// from a hand-kept list. Only athletics rendered before #867; the others
+// resolved on neither wiki. The same third-party checks as the device loop.
+{
+    const { pitchImages } = await import('./equipmentAttributes.js');
+    const render = sport => getEquipmentAttributesFromProps(
+        { leisure: 'pitch', sport, osm_type: 'W', osm_id: '1' }, t).html;
+    for (const sport of Object.keys(pitchImages)) {
+        const html = render(sport);
+        assert.ok(html.includes('src="/ext/wikimedia/'), `pitch sport=${sport} renders no proxied illustration`);
+        assert.ok(!/src="https?:\/\//.test(html), `pitch sport=${sport} renders an absolute URL`);
+        assert.ok(html.includes('referrerpolicy="no-referrer"'), `pitch sport=${sport} sends a Referer`);
+        assert.ok(!/onerror="[^"]*this\.src/.test(html), `pitch sport=${sport}'s onerror assigns a new src`);
+        assert.ok(html.includes(t('popup.deviceSymbol')), `pitch sport=${sport} lacks the example-image caption`);
+    }
+    // Deliberately unillustrated: no free hockey pitch diagram on Commons.
+    assert.equal(pitchImages.hockey, undefined);
+    assert.equal(pitchImages.field_hockey, undefined);
+    // Several sports → the multi-use illustration.
+    const src = html => /src="([^"]+)"/.exec(html)?.[1];
+    assert.equal(src(render('soccer;basketball')), src(render('multi')));
+    assert.equal(src(render(' soccer ')), src(render('soccer')));
+}
+
 // --- an unresolvable name renders nothing, rather than a broken image ------
 {
     const { objDevices } = await import('./objPlaygroundEquipment.js');
