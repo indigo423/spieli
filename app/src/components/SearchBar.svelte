@@ -3,6 +3,7 @@
   import { fromLonLat } from 'ol/proj';
   import { mapStore } from '../stores/map.js';
   import { nominatimFetch } from '../lib/nominatim.js';
+  import { rankSearchHits } from '../lib/searchRanking.js';
   import { Search, Loader2, X } from 'lucide-svelte';
   import { cn } from '../lib/utils.js';
   import { _ } from 'svelte-i18n';
@@ -37,7 +38,13 @@
     resultsEl?.children?.[i]?.scrollIntoView({ block: 'nearest' });
   }
 
+  // Each search gets a number; an answer that lands after a newer search
+  // started is dropped, so a slow request for "Frank" cannot overwrite the
+  // results for "Frankfurt" (two requests per search widen that window).
+  let searchSeq = 0;
+
   async function search() {
+    const seq = ++searchSeq;
     const q = query.trim();
     if (!q) {
       results = [];
@@ -48,38 +55,40 @@
     searching = true;
     try {
       const baseParams = { q, addressdetails: 1, limit: 10 };
-      let viewCenterLon = null;
-      let viewCenterLat = null;
-      let hits;
+      // Both answers, always (#973): the one bounded to the view finds the
+      // nearby street or shop, the unbounded one the city. Using the local
+      // answer alone whenever it had anything hid every city behind a
+      // same-named shop. The view still biases the unbounded query.
+      let globalHits = [];
+      let localHits = null;   // null = no view, or the view request failed
       if (regionExtent) {
-        const [minLon, minLat, maxLon, maxLat] = regionExtent;
-        const viewbox = `${minLon},${minLat},${maxLon},${maxLat}`;
-        viewCenterLon = (minLon + maxLon) / 2;
-        viewCenterLat = (minLat + maxLat) / 2;
-        hits = await nominatimFetch('/search', { ...baseParams, viewbox, bounded: 1 }, { timeout: 0 });
-        if (!hits.length) {
-          hits = await nominatimFetch('/search', { ...baseParams, viewbox, bounded: 0 }, { timeout: 0 });
-        }
+        const viewbox = regionExtent.join(',');
+        const [g, l] = await Promise.allSettled([
+          nominatimFetch('/search', { ...baseParams, viewbox, bounded: 0 }, { timeout: 0 }),
+          nominatimFetch('/search', { ...baseParams, viewbox, bounded: 1 }, { timeout: 0 }),
+        ]);
+        // One failed request must not hide what the other found — but it is
+        // logged, so an empty search box has a trace.
+        if (g.status === 'rejected' && l.status === 'rejected') throw g.reason;
+        if (g.status === 'rejected') console.warn('Search (unbounded) failed:', g.reason);
+        if (l.status === 'rejected') console.warn('Search (in view) failed:', l.reason);
+        globalHits = g.status === 'fulfilled' ? g.value : [];
+        localHits = l.status === 'fulfilled' ? l.value : null;
       } else {
-        hits = await nominatimFetch('/search', baseParams, { timeout: 0 });
+        globalHits = await nominatimFetch('/search', baseParams, { timeout: 0 });
       }
-      if (viewCenterLon !== null) {
-        hits = hits.slice().sort((a, b) => {
-          const da = (parseFloat(a.lon) - viewCenterLon) ** 2 + (parseFloat(a.lat) - viewCenterLat) ** 2;
-          const db = (parseFloat(b.lon) - viewCenterLon) ** 2 + (parseFloat(b.lat) - viewCenterLat) ** 2;
-          return da - db;
-        });
-      }
-      results = hits.slice(0, 5);
+      if (seq !== searchSeq) return;
+      results = rankSearchHits(globalHits, localHits, regionExtent);
       activeIndex = -1;
       showResults = results.length > 0 && !dismissed;
     } catch (err) {
+      if (seq !== searchSeq) return;
       console.error('Search failed:', err);
       results = [];
       activeIndex = -1;
       showResults = false;
     } finally {
-      searching = false;
+      if (seq === searchSeq) searching = false;
     }
   }
 
@@ -172,6 +181,7 @@
     // suggestions *for*, so it must not keep claiming to be — `aria-expanded`
     // has to describe the popup that is actually relevant to the input.
     if (query.length < 2) {
+      searchSeq++;   // an answer still in flight must not reopen the list
       results = [];
       showResults = false;
     }
@@ -185,6 +195,7 @@
   let searchTimeout;
 
   function clearSearch() {
+    searchSeq++;   // an answer still in flight must not refill a cleared box
     query = '';
     results = [];
     activeIndex = -1;
