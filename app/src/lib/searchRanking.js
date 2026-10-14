@@ -48,6 +48,31 @@ const visibleName = (h) => String(h.display_name ?? '').replace(/,\s*\d{4,5}(?=,
 
 const wrapLon = (lon) => ((lon + 180) % 360 + 360) % 360 - 180;
 
+/**
+ * The box the in-view query searches: the view, but reaching at least
+ * `radiusKm` from its centre in every direction (so ~20 km across by default)
+ * (#976). Selecting a place zooms the map to street level, about 1 km across;
+ * searching a street from there must still find the one 2.5 km away in the
+ * same town (Turmstraße in Fulda-Lehnerz), not only namesakes elsewhere.
+ * Only the query is widened — the ranking keeps the real view for "in view",
+ * and sorts local hits by distance, so what is on screen still comes first.
+ * Longitudes are clamped to [-180, 180]; an unusable view gives null.
+ * @param {number[]|null} box  [minLon, minLat, maxLon, maxLat]
+ * @returns {number[]|null}
+ */
+export function searchArea(box, radiusKm = 10) {
+  if (!box || box.length !== 4 || box.some(v => !Number.isFinite(v))) return null;
+  const lon = (box[0] + box[2]) / 2, lat = (box[1] + box[3]) / 2;
+  const dLat = radiusKm / 111;
+  const dLon = radiusKm / (111 * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
+  const clampLon = (v) => Math.max(-180, Math.min(180, v));
+  const clampLat = (v) => Math.max(-90, Math.min(90, v));
+  return [
+    clampLon(Math.min(box[0], lon - dLon)), clampLat(Math.min(box[1], lat - dLat)),
+    clampLon(Math.max(box[2], lon + dLon)), clampLat(Math.max(box[3], lat + dLat)),
+  ];
+}
+
 /** The view as a centre and a containment test, or null. Copes with a view
  *  whose longitudes OpenLayers reports outside [-180, 180] (a wrapped world). */
 function viewOf(box) {

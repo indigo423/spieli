@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { rankSearchHits, isPlace } from './searchRanking.js';
+import { rankSearchHits, isPlace, searchArea } from './searchRanking.js';
 
 const hit = (id, cls, type, addresstype, importance, lon, lat, name = id) =>
   ({ osm_type: 'node', osm_id: id, class: cls, type, addresstype, importance, lon: String(lon), lat: String(lat), display_name: name });
@@ -118,6 +118,35 @@ const WETZLAR = [8.40, 50.50, 8.60, 50.60];
   const near = hit(130, 'boundary', 'administrative', 'village', 0.40, 8.55, 50.52, 'Near');
   const far  = hit(131, 'boundary', 'administrative', 'town', 0.45, 9.9, 51.0, 'Far');
   assert.equal(rankSearchHits([far, near], [], wrapped)[0].display_name, 'Near');
+}
+
+// 15. A street-level view is widened to ~10 km, so a street 2.5 km away in
+//     the same town counts as nearby (#976); a larger view stays as it is.
+{
+  const z17 = [9.669, 50.548, 9.683, 50.554];   // ~1 km across, Fulda centre
+  const area = searchArea(z17);
+  const lehnerz = { lon: '9.7032', lat: '50.5718' };
+  assert.ok(area[0] < 9.6 && area[2] > 9.75 && area[1] < 50.47 && area[3] > 50.63, JSON.stringify(area));
+  assert.ok(+lehnerz.lon > area[0] && +lehnerz.lon < area[2] && +lehnerz.lat > area[1] && +lehnerz.lat < area[3]);
+  assert.deepEqual(searchArea(WETZLAR.map((v, i) => i < 2 ? v - 1 : v + 1)), WETZLAR.map((v, i) => i < 2 ? v - 1 : v + 1));
+  assert.equal(searchArea(null), null);
+  assert.equal(searchArea([NaN, 1, 2, 3]), null);
+  // Near the antimeridian the box stays a valid viewbox.
+  const fiji = searchArea([179.95, -16.6, 179.97, -16.58]);
+  assert.ok(fiji[2] <= 180 && fiji[0] >= -180);
+}
+
+// 16. With the widened query, what is on screen still comes first: local hits
+//     are ordered by distance from the real view's centre.
+{
+  const z17 = [9.669, 50.548, 9.683, 50.554];
+  const local = [
+    hit(140, 'highway', 'residential', 'road', 0.2, 9.80, 50.60, 'Turmstraße, far side'),
+    hit(141, 'highway', 'residential', 'road', 0.1, 9.677, 50.551, 'Turmstraße, on screen'),
+    hit(142, 'highway', 'residential', 'road', 0.1, 9.703, 50.572, 'Turmstraße, Lehnerz'),
+  ];
+  assert.deepEqual(rankSearchHits([], local, z17).map(h => h.display_name),
+    ['Turmstraße, on screen', 'Turmstraße, Lehnerz', 'Turmstraße, far side']);
 }
 
 console.log('searchRanking tests passed.');
