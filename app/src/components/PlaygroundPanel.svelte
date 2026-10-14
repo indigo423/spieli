@@ -10,7 +10,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { transform } from 'ol/proj';
-  import { X, Share2, Check, ChevronDown, ChevronUp, ChevronRight, Image, Package, Navigation, Star, Info, Phone, Mail, Accessibility } from 'lucide-svelte';
+  import { X, Share2, Check, ChevronDown, ChevronUp, ChevronRight, Image, Package, Navigation, Star, Info, Phone, Mail, Accessibility, PencilLine } from 'lucide-svelte';
   import { _, locale } from 'svelte-i18n';
 
   import { selection } from '../stores/selection.js';
@@ -364,9 +364,8 @@
   // back exactly the data-quality reading the view leaves out (#924).
   $: completenessLevel = attr && $mappingDetail ? playgroundCompleteness(attr) : null;
 
-  // Under the badge: which of the rule's two inputs is missing, with a link to
-  // this playground in MapComplete — so "basic" or "no details yet" reads as
-  // an invitation, not a grade (#919). Same condition as the badge: only with
+  // Under the badge: which of the rule's two inputs is missing — so "basic" or
+  // "no details yet" reads as an invitation, not a grade (#919). Same condition as the badge: only with
   // mapping detail on; nothing for "detailed".
   $: detailHintKey = completenessLevel ? mappingDetailHintKey(attr) : null;
   $: completeness = completenessLevel
@@ -615,7 +614,8 @@
         </div>
         {#if detailHintKey}
           <p class="detail-hint" data-testid="mapping-detail-hint">
-            {$_(detailHintKey, { values: { detailed: $_('mappingDetail.detailed'), basic: $_('mappingDetail.basic') } })}
+            <PencilLine class="h-4 w-4 shrink-0 mt-px text-blue-600" />
+            <span class="min-w-0">{$_(detailHintKey)}</span>
           </p>
         {/if}
       {/if}
@@ -1255,13 +1255,23 @@
     flex-shrink: 0;
   }
 
-  /* Pulled up against the status row's mb-4 so it reads as the badge's
-     caption, not as a separate section. */
+  /* A callout rather than a grey caption line, which went unnoticed among the
+     panel's other content (#982). Blue, not amber: the hint is an invitation,
+     and a warning colour next to the badge would read as the verdict the
+     mapping-detail palette avoids. Pulled up against the status row's mb-4 so
+     it stays attached to the badge. */
   .detail-hint {
-    margin: -0.5rem 0 1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: -0.25rem 0 1rem;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
     font-size: 0.8125rem;
     line-height: 1.4;
-    color: #4b5563;
+    color: #1e3a8a;
   }
 
   .data-age-chip {
