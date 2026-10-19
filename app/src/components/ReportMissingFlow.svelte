@@ -24,7 +24,7 @@
   import { selection, hasSelection } from '../stores/selection.js';
   import { location } from '../stores/location.js';
   import { dataCoverage, coverageAt, isCovered } from '../stores/dataCoverage.js';
-  import { reportStep, reportStartAt, reportBusy, startReport, cancelReport } from '../stores/reportMissing.js';
+  import { reportStep, reportBusy, startReport, cancelReport } from '../stores/reportMissing.js';
   import { fetchPlaygroundsBbox } from '../lib/api.js';
   import { tagWithBackend } from '../hub/backendTag.js';
   import { getPlaygroundTitle, fitViewToSelection } from '../lib/playgroundHelpers.js';
@@ -217,12 +217,6 @@
     dupeFeature = null;
     checking = false;
     flowId += 1;
-    const at = get(reportStartAt);
-    reportStartAt.set(null);
-    const view = attachedMap?.getView();
-    if (at && view) {
-      view.animate({ center: at, zoom: Math.max(view.getZoom() ?? 0, 18), duration: 400 });
-    }
   }
 
   function useMyLocation() {

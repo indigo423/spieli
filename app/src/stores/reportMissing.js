@@ -17,12 +17,6 @@ import { selection, hasSelection } from './selection.js';
 
 export const reportStep = writable(null);
 
-/**
- * Where a report should start: an EPSG:3857 coordinate to centre on, or null
- * for "where the map is now". Consumed (reset to null) by ReportMissingFlow.
- */
-export const reportStartAt = writable(null);
-
 /** True while a note is being sent: the flow cannot be closed then. */
 export const reportBusy = writable(false);
 
@@ -57,9 +51,8 @@ if (hasHistory) {
     });
 }
 
-export function startReport(coordinate = null) {
+export function startReport() {
     if (get(reportStep)) return;
-    reportStartAt.set(coordinate);
     reportStep.set('place');
     if (!hasHistory) {
         if (get(hasSelection)) selection.clear();
