@@ -850,7 +850,6 @@
   },
   "report": {
     "button": "Missing a playground?",
-    "buttonShort": "Missing one?",
     "infoCard": "Report a missing playground",
     "searchHint": "Missing a playground? Report it",
     "cancel": "Cancel",
