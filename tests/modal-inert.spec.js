@@ -7,6 +7,8 @@ import { injectApiConfig, stubApiRoutes } from './helpers.js';
 // dialog, Tab stays there, and Esc hands focus back to where it was.
 
 test.beforeEach(async ({ page }) => {
+  // No live Nominatim: its region fit would land at a network-dependent time.
+  await page.route('**/nominatim.openstreetmap.org/**', route => route.abort());
   await injectApiConfig(page);
   await stubApiRoutes(page);
   await page.goto('/');
@@ -38,4 +40,13 @@ test('keyboard focus stays in the info dialog, and returns after Esc', async ({ 
   await expect(page.locator('.search-area')).toHaveJSProperty('inert', false);
   // Focus back on the button that opened it.
   await expect(infoBtn).toBeFocused();
+});
+
+test('the empty-area hint does not appear behind an open dialog', async ({ page }) => {
+  // The hint mounts 1.5 s after the map settles with no playgrounds in view.
+  // Mounted after the dialog opened, it would not be inert and Tab reached it.
+  await page.locator('.controls-top-right .control-btn').first().click();
+  await expect(page.locator('[role="dialog"][aria-modal="true"]')).toBeVisible();
+  await page.waitForTimeout(2500);
+  await expect(page.getByRole('button', { name: 'Report it' })).toHaveCount(0);
 });

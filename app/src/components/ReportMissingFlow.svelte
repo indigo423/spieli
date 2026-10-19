@@ -16,7 +16,7 @@
   import { buffer } from 'ol/extent.js';
   import GeoJSON from 'ol/format/GeoJSON.js';
   import { Style, Circle as CircleStyle, Fill, Stroke, Text } from 'ol/style.js';
-  import { modal } from '../stores/modalOpen.js';
+  import { modal, modalOpen } from '../stores/modalOpen.js';
   import { mapStore } from '../stores/map.js';
   import { playgroundSourceStore } from '../stores/playgroundSource.js';
   import { activeTierStore } from '../stores/tier.js';
@@ -594,7 +594,7 @@
   </div>
 {/if}
 
-{#if showEmptyHint && !$reportStep && !$hasSelection}
+{#if showEmptyHint && !$reportStep && !$hasSelection && !$modalOpen}
   <div class="empty-hint" role="status">
     <span>{$_('report.empty.text')}</span>
     <button type="button" class="btn btn-primary btn-small" onclick={() => startReport()}>
