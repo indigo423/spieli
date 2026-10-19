@@ -1,9 +1,9 @@
 <script>
   // "Missing a playground?" (#1000): crosshair placement, duplicate check,
-  // form, thank-you — plus the empty-area hint, right-click entry and the
-  // visitor's own sent hints as pins. The entry points only call
-  // startReport(); everything after that lives here. Note text, sending and
-  // storage are in lib/osmNotes.js.
+  // form, thank-you — plus the empty-area hint and the visitor's own sent
+  // hints as pins. The entry points only call startReport(); everything
+  // after that lives here. Note text, sending and storage are in
+  // lib/osmNotes.js.
   import { onDestroy, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { _ } from 'svelte-i18n';
@@ -147,17 +147,6 @@
     watchedSource?.on('change', onSourceChange);
   }
 
-  // Right-click with a mouse only. A touch long-press fires contextmenu too
-  // (Android Chrome), and a resting finger must not start a report.
-  let lastPointerType = 'mouse';
-  function onPointerDown(evt) { lastPointerType = evt.pointerType || 'mouse'; }
-  function onContextMenu(evt) {
-    if (!attachedMap || get(reportStep)) return;
-    if ((evt.pointerType || lastPointerType) !== 'mouse') return;
-    evt.preventDefault();
-    startReport(attachedMap.getEventCoordinate(evt));
-  }
-
   function onMapClick(evt) {
     if (get(reportStep)) return;
     const hit = attachedMap.forEachFeatureAtPixel(evt.pixel, f => f, {
@@ -176,8 +165,6 @@
     map.addLayer(ownLayer);
     map.on('moveend', onMoveEnd);
     map.on('click', onMapClick);
-    map.getViewport().addEventListener('contextmenu', onContextMenu);
-    map.getViewport().addEventListener('pointerdown', onPointerDown, true);
     zoom = map.getView().getZoom() ?? 0;
     refreshOwnPins();
   }
@@ -187,8 +174,6 @@
     attachedMap.removeLayer(ownLayer);
     attachedMap.un('moveend', onMoveEnd);
     attachedMap.un('click', onMapClick);
-    attachedMap.getViewport().removeEventListener('contextmenu', onContextMenu);
-    attachedMap.getViewport().removeEventListener('pointerdown', onPointerDown, true);
     attachedMap = null;
   }
 
